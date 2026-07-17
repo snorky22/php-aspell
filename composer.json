@@ -1,0 +1,28 @@
+{
+    "name": "php-aspell/php-aspell",
+    "description": "A pure PHP 8.4 port of GNU Aspell",
+    "type": "library",
+    "license": "LGPL-2.1-or-later",
+    "authors": [
+        {
+            "name": "Francois",
+            "email": "francois@example.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "Aspell\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Aspell\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
