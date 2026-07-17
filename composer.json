@@ -1,7 +1,19 @@
 {
     "name": "php-aspell/php-aspell",
-    "description": "A pure PHP 8.4 port of GNU Aspell",
+    "description": "A pure PHP 8.4 port of GNU Aspell with native LaTeX-aware spell checking",
     "type": "library",
+    "keywords": [
+        "aspell",
+        "spell-check",
+        "spellcheck",
+        "spelling",
+        "spellchecker",
+        "latex",
+        "phonetic",
+        "dictionary",
+        "cwl"
+    ],
+    "homepage": "https://github.com/snorky22/php-aspell",
     "license": "LGPL-2.1-or-later",
     "authors": [
         {
@@ -9,8 +21,13 @@
             "email": "francois@example.com"
         }
     ],
+    "support": {
+        "issues": "https://github.com/snorky22/php-aspell/issues",
+        "source": "https://github.com/snorky22/php-aspell"
+    },
     "require": {
-        "php": ">=8.4"
+        "php": ">=8.4",
+        "ext-mbstring": "*"
     },
     "require-dev": {
         "phpunit/phpunit": "^11.0"
@@ -24,6 +41,9 @@
         "psr-4": {
             "Aspell\\Tests\\": "tests/"
         }
+    },
+    "scripts": {
+        "test": "phpunit tests/"
     },
     "config": {
         "sort-packages": true
