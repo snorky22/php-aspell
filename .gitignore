@@ -1,0 +1,27 @@
+# JetBrains IDEs
+.idea/
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+
+
+# Thumbnails
+._*
+
+# Files that might appear in the same directory as your binary messages
+.Spotlight-V100
+.Trashes
+
+# Composer
+vendor/
+composer.lock
+
+# PHPUnit
+.phpunit.result.cache
+
+# Temp files
+*.swp
+*~
