@@ -57,4 +57,17 @@ class SuggestionEngineTest extends TestCase
         
         $this->assertEquals(3, $this->engine->editDistance('nait', 'night', $weights));
     }
+
+    public function testMultibyteDistance(): void
+    {
+        $weights = new EditDistanceWeights(del1: 1, del2: 1, swap: 1, sub: 1);
+
+        // Each accented character must count as ONE edit, not two bytes.
+        // "ete" -> "été": substitute e->é and e->é = 2 edits.
+        $this->assertEquals(2, $this->engine->editDistance('ete', 'été', $weights));
+        // Identical accented words are distance 0.
+        $this->assertEquals(0, $this->engine->editDistance('été', 'été', $weights));
+        // A single accent difference is one substitution.
+        $this->assertEquals(1, $this->engine->editDistance('etre', 'être', $weights));
+    }
 }

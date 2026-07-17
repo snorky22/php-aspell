@@ -41,6 +41,7 @@ class AspellConfig
             new KeyInfo('data-dir', KeyType::String, '/usr/share/aspell', 'directory of language data files'),
             new KeyInfo('jargon', KeyType::String, '', 'extra information to distinguish dictionaries'),
             new KeyInfo('size', KeyType::Integer, 50, 'size of the dictionary'),
+            new KeyInfo('ignore', KeyType::Integer, 1, 'ignore words <= n chars'),
         ];
 
         foreach ($keys as $ki) {

@@ -24,6 +24,9 @@ class PhoneticTransformer
     /** @var array<int, string> Translation table for character cleaning */
     private array $toClean = [];
 
+    /** @var array<int, int> */
+    private array $multiByteRules = [];
+
     public function __construct(
         array $rules,
         array $options = [],
@@ -36,13 +39,55 @@ class PhoneticTransformer
         $this->version = (string)($options['version'] ?? '');
         $this->toClean = $toClean;
 
+        if (empty($this->toClean)) {
+            for ($i = 0; $i < 256; $i++) {
+                $this->toClean[$i] = strtoupper(chr($i));
+            }
+        }
+
         $this->initRules($rules);
+    }
+
+    public static function fromFile(string $filename): self
+    {
+        $lines = file($filename, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if ($lines === false) {
+            throw new \RuntimeException("Could not read phonetic file: $filename");
+        }
+
+        $rules = [];
+        $options = [];
+
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '' || str_starts_with($line, '#')) {
+                continue;
+            }
+
+            if (preg_match('/^(\w+)\s+(.+)$/', $line, $matches)) {
+                $key = $matches[1];
+                $value = $matches[2];
+                if ($key === 'version') {
+                    $options['version'] = $value;
+                } elseif ($key === 'followup') {
+                    $options['followup'] = ($value === 'true');
+                } elseif ($key === 'collapse_result') {
+                    $options['collapse_result'] = ($value === 'true');
+                } else {
+                    // It's a rule
+                    $rules[] = [$key, $value === '_' ? '' : $value];
+                }
+            }
+        }
+
+        return new self($rules, $options);
     }
 
     private function initRules(array $rules): void
     {
         $this->rules = $rules;
         $this->hash = array_fill(0, 256, -1);
+        $this->multiByteRules = [];
 
         foreach ($this->rules as $i => $rule) {
             $search = $rule[0];
@@ -50,9 +95,14 @@ class PhoneticTransformer
                 continue;
             }
 
-            $firstChar = ord($search[0]);
-            if ($this->hash[$firstChar] === -1) {
-                $this->hash[$firstChar] = $i;
+            $firstChar = mb_substr($search, 0, 1, 'UTF-8');
+            $cOrd = mb_ord($firstChar, 'UTF-8');
+            if ($cOrd < 256) {
+                if ($this->hash[$cOrd] === -1) {
+                    $this->hash[$cOrd] = $i;
+                }
+            } else {
+                $this->multiByteRules[] = $i;
             }
         }
     }
@@ -68,17 +118,22 @@ class PhoneticTransformer
         }
 
         $target = '';
-        $wordLen = strlen($word);
-        $i = 0; // index in $word
+        $wordLen = mb_strlen($word, 'UTF-8');
+        $i = 0; // index in $word (character index)
         $z = 0; // flag for '<' rule used
 
         while ($i < $wordLen) {
-            $c = $word[$i];
-            $n = $this->hash[ord($c)] ?? -1;
+            $c = mb_substr($word, $i, 1, 'UTF-8');
+            // We still use ASCII hash for the first byte if it's ASCII, 
+            // but for multi-byte we might need a better hash or just a full scan.
+            // GNU Aspell's Phonet is generally designed for 8-bit.
+            // For now, we'll try to support it by using the first character.
+            $cOrd = mb_ord($c, 'UTF-8');
+            $n = ($cOrd < 256) ? ($this->hash[$cOrd] ?? -1) : -1;
             $z0 = 0; // flag for rule matched at this position
 
             if ($n >= 0) {
-                for ($currN = $n; $currN < count($this->rules) && $this->rules[$currN][0][0] === $c; $currN++) {
+                for ($currN = $n; $currN < count($this->rules) && mb_substr($this->rules[$currN][0], 0, 1, 'UTF-8') === $c; $currN++) {
                     $rule = $this->rules[$currN];
                     $search = $rule[0];
                     $replace = $rule[1];
@@ -96,33 +151,33 @@ class PhoneticTransformer
 
                         if ($isLessRule && $z === 0) {
                             // rule with '<' used
-                            if ($target !== '' && $replace !== '' && (substr($target, -1) === $c || substr($target, -1) === $replace[0])) {
-                                $target = substr($target, 0, -1);
+                            if ($target !== '' && $replace !== '' && (mb_substr($target, -1, 1, 'UTF-8') === $c || mb_substr($target, -1, 1, 'UTF-8') === mb_substr($replace, 0, 1, 'UTF-8'))) {
+                                $target = mb_substr($target, 0, -1, 'UTF-8');
                             }
                             $z0 = 1;
                             $z = 1;
                             
                             // Replace in word itself for '<' rules
-                            $word = substr($word, 0, $i) . $replace . substr($word, $i + $k);
-                            $wordLen = strlen($word);
-                            $c = $word[$i];
+                            $word = mb_substr($word, 0, $i, 'UTF-8') . $replace . mb_substr($word, $i + $k, null, 'UTF-8');
+                            $wordLen = mb_strlen($word, 'UTF-8');
+                            $c = mb_substr($word, $i, 1, 'UTF-8');
                         } else {
                             $i += $k - 1;
                             $z = 0;
-                            $replaceLen = strlen($replace);
+                            $replaceLen = mb_strlen($replace, 'UTF-8');
                             for ($ri = 0; $ri < $replaceLen - 1; $ri++) {
-                                if ($target === '' || substr($target, -1) !== $replace[$ri]) {
-                                    $target .= $replace[$ri];
+                                if ($target === '' || mb_substr($target, -1, 1, 'UTF-8') !== mb_substr($replace, $ri, 1, 'UTF-8')) {
+                                    $target .= mb_substr($replace, $ri, 1, 'UTF-8');
                                 }
                             }
-                            $c = $replace[$replaceLen - 1] ?? '';
+                            $c = mb_substr($replace, $replaceLen - 1, 1, 'UTF-8');
                             
                             if (str_contains($search, '^^')) {
                                 if ($c !== '') {
                                     $target .= $c;
                                 }
-                                $word = substr($word, $i + 1);
-                                $wordLen = strlen($word);
+                                $word = mb_substr($word, $i + 1, null, 'UTF-8');
+                                $wordLen = mb_strlen($word, 'UTF-8');
                                 $i = 0;
                                 $z0 = 1;
                             }
@@ -136,7 +191,7 @@ class PhoneticTransformer
             }
 
             if ($z0 === 0) {
-                if ($c !== '' && (!$this->collapseResult || $target === '' || substr($target, -1) !== $c)) {
+                if ($c !== '' && (!$this->collapseResult || $target === '' || mb_substr($target, -1, 1, 'UTF-8') !== $c)) {
                     $target .= $c;
                 }
                 $i++;
@@ -150,12 +205,18 @@ class PhoneticTransformer
     private function prepareWord(string $inWord): string
     {
         $word = '';
-        $len = strlen($inWord);
+        $len = mb_strlen($inWord, 'UTF-8');
         for ($i = 0; $i < $len; $i++) {
-            $char = $inWord[$i];
-            $cleaned = $this->toClean[ord($char)] ?? null;
-            if ($cleaned !== null && $cleaned !== "\0" && $cleaned !== 0) {
-                $word .= (is_int($cleaned) ? chr($cleaned) : $cleaned);
+            $char = mb_substr($inWord, $i, 1, 'UTF-8');
+            $cOrd = mb_ord($char, 'UTF-8');
+            if ($cOrd < 256) {
+                $cleaned = $this->toClean[$cOrd] ?? null;
+                if ($cleaned !== null && $cleaned !== "\0" && $cleaned !== 0) {
+                    $word .= (is_int($cleaned) ? chr($cleaned) : $cleaned);
+                }
+            } else {
+                // Keep multi-byte as is for now
+                $word .= $char;
             }
         }
         return $word;
@@ -163,14 +224,14 @@ class PhoneticTransformer
 
     private function matchRule(string $word, int $pos, string $search, &$k, &$p): bool
     {
-        $wordLen = strlen($word);
+        $wordLen = mb_strlen($word, 'UTF-8');
         $sIdx = 1; // skip first char as it's already matched
         $k = 1;
         $p = 5; // default priority
 
         while ($sIdx < strlen($search) && 
                $pos + $k < $wordLen && 
-               $word[$pos + $k] === $search[$sIdx] && 
+               mb_substr($word, $pos + $k, 1, 'UTF-8') === $search[$sIdx] && 
                !ctype_digit($search[$sIdx]) && 
                !str_contains('(-<^$', $search[$sIdx])) {
             $k++;
@@ -188,7 +249,7 @@ class PhoneticTransformer
                 $sIdx++;
             }
             
-            if ($pos + $k < $wordLen && str_contains($options, $word[$pos + $k])) {
+            if ($pos + $k < $wordLen && str_contains($options, mb_substr($word, $pos + $k, 1, 'UTF-8'))) {
                 $k++;
             } else {
                 return false;
@@ -244,18 +305,19 @@ class PhoneticTransformer
 
     private function shouldSkipDueToFollowup(string $word, int $pos, int $k, int $p, string $search): bool
     {
-        if (!$this->followup || $k <= 1 || str_contains($search, '-') || $pos + $k >= strlen($word)) {
+        if (!$this->followup || $k <= 1 || str_contains($search, '-') || $pos + $k >= mb_strlen($word, 'UTF-8')) {
             return false;
         }
 
-        $c0 = $word[$pos + $k - 1];
-        $n0 = $this->hash[ord($c0)] ?? -1;
+        $c0 = mb_substr($word, $pos + $k - 1, 1, 'UTF-8');
+        $c0Ord = mb_ord($c0, 'UTF-8');
+        $n0 = ($c0Ord < 256) ? ($this->hash[$c0Ord] ?? -1) : -1;
 
         if ($n0 < 0) {
             return false;
         }
 
-        for ($currN0 = $n0; $currN0 < count($this->rules) && $this->rules[$currN0][0][0] === $c0; $currN0++) {
+        for ($currN0 = $n0; $currN0 < count($this->rules) && mb_substr($this->rules[$currN0][0], 0, 1, 'UTF-8') === $c0; $currN0++) {
             $fRule = $this->rules[$currN0][0];
             $fk = 1;
             $fp = 5;

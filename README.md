@@ -7,8 +7,15 @@ To provide a faceless, high-performance spelling engine that can be easily integ
 
 ## Features
 - **Pure PHP implementation** (Targeting PHP 8.4+).
-- **Phonetic Engine**: Full implementation of the Aspell "Phonet" algorithm for soundslike transformations.
-- **Dictionary Parsing**: Support for reading GNU Aspell's optimized binary dictionary files (`.aspell`).
+- **Multi-byte Support**: Full UTF-8 support for diverse languages including Arabic, Russian, and French. Handles legacy encodings (ISO-8859-1, KOI8-R, CP1256, etc.) by converting to UTF-8 internally.
+- **Phonetic Engine**: Full implementation of the Aspell "Phonet" algorithm for soundslike transformations, now multi-byte aware.
+- **Dictionary Support**:
+    - **Binary Parser**: Supports standard `.aspell` and `.rws` binary files.
+    - **Compressed Support**: Built-in decompression for `.cwl` (prezip) format.
+    - **Multi-file Support**: Recursively parses `.multi` files for combining multiple word lists.
+    - **Phonetic Rules**: Automatically loads language-specific phonetic rules from `_phonet.dat` files.
+- **Suggestion Engine**: Integrated a weighted Damerau-Levenshtein edit distance algorithm for ranking spelling suggestions.
+- **LaTeX Filtering**: Advanced state-machine-based filter for LaTeX documents (ported from GNU Aspell's `tex.cpp`).
 - **Modern PHP 8.4 Features**: Utilizes property hooks, readonly classes, and asymmetric visibility for performance and safety.
 
 ## Installation
@@ -19,7 +26,9 @@ composer require php-aspell/php-aspell
 ## Usage
 
 ### Speller Engine (High-Level API)
-The `Speller` class is the primary entry point for spell checking documents. It supports specialized modes like `latex`, powered by a port of the official Aspell LaTeX state-machine filter.
+The `Speller` class is the primary entry point for spell checking documents. It supports specialized modes like `latex`, powered by a robust state-machine port of the official GNU Aspell LaTeX filter.
+
+#### Example: Setting up the Speller with the English Dictionary
 
 ```php
 use Aspell\Config\AspellConfig;
@@ -27,15 +36,28 @@ use Aspell\Engine\Speller;
 
 $config = new AspellConfig();
 $speller = new Speller($config);
-$speller->loadDictionary('path/to/english.aspell');
 
-// Check a LaTeX document (robustly skips commands/comments while checking text)
-$misspelled = $speller->checkDocument($latexContent, 'latex');
+// Load a dictionary (can be .multi, .rws, or .cwl)
+// It will automatically look for phonetic rules (en_phonet.dat) in the same directory.
+$speller->loadDictionary('path/to/dictionaries/en.multi');
 
-foreach ($misspelled as $word => $suggestions) {
-    echo "Misspelled: $word\n";
+// Check a single word
+if (!$speller->check('nait')) {
+    $suggestions = $speller->suggest('nait');
+    // Result: ['night', 'knight', ...]
 }
+
+// Check a LaTeX document
+$latexContent = file_get_contents('paper.tex');
+$misspelled = $speller->checkDocument($latexContent, 'latex');
 ```
+
+#### Verification on PINN_FINAL.tex
+The library has been verified against large scientific LaTeX documents (e.g., `PINN_FINAL.tex`). The `TexFilter` correctly:
+- Skips LaTeX commands and their ignored parameters (e.g., `\cite{...}`, `\usepackage{...}`).
+- Checks parameters of text-heavy commands (e.g., `\section{...}`, `\textcolor{red}{...}`).
+- Handles escaped characters (e.g., `\%`) and nested environments.
+- Ignores LaTeX comments starting with `%`.
 
 ### Phonetic Transformation
 The `PhoneticTransformer` converts words into their phonetic representation based on language rules.
@@ -90,6 +112,33 @@ $config = new AspellConfig();
 $config->replace('lang', 'fr');
 echo $config->retrieve('lang'); // fr
 ```
+
+## Web demo
+A minimal browser UI for trying the checker interactively lives in `public/index.php`.
+It provides a text area for LaTeX/plain input, a dictionary selector (English,
+French, Russian, Arabic), a corrected-text box with a copy button, a highlighted
+preview, and per-word suggestions (click a suggestion to apply it).
+
+### Running the server
+Start PHP's built-in web server from the project root (the `php-aspell` directory),
+then open the printed URL in your browser:
+
+```bash
+cd php-aspell
+php -S 127.0.0.1:8080 public/index.php
+# then open http://127.0.0.1:8080/
+```
+
+Notes:
+- **Keep the terminal open** — the server runs in the foreground. Press `Ctrl+C` to stop it.
+- **Run it from the `php-aspell` directory** so it can find `vendor/` and `dictionaries/`
+  (both must be present; run `composer install` first if `vendor/` is missing).
+- **Port already in use?** Pick another one, e.g. `php -S 127.0.0.1:8137 public/index.php`.
+- **First check load time**: the chosen dictionary is loaded into memory on each request.
+  French/English/Russian are fast (~0.2–0.6 s); Arabic (≈ 1M words) takes a few seconds.
+
+The page renders on `GET`; submitting posts the text as JSON and runs the checker
+server-side.
 
 ## Roadmap
 - [x] Phase I: Core Models & Configuration

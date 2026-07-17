@@ -36,8 +36,12 @@ class SuggestionEngine
      */
     public function editDistance(string $a, string $b, EditDistanceWeights $w = new EditDistanceWeights()): int
     {
-        $aSize = strlen($a);
-        $bSize = strlen($b);
+        // Operate on Unicode characters, not raw bytes, so accented words
+        // (é, ï, …) are compared a character at a time rather than a byte.
+        $a = mb_str_split($a, 1, 'UTF-8');
+        $b = mb_str_split($b, 1, 'UTF-8');
+        $aSize = count($a);
+        $bSize = count($b);
 
         if ($aSize === 0) {
             return $bSize * $w->del1;
