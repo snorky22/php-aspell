@@ -18,6 +18,25 @@ composer require php-aspell/php-aspell
 
 ## Usage
 
+### Speller Engine (High-Level API)
+The `Speller` class is the primary entry point for spell checking documents. It supports specialized modes like `latex`.
+
+```php
+use Aspell\Config\AspellConfig;
+use Aspell\Engine\Speller;
+
+$config = new AspellConfig();
+$speller = new Speller($config);
+$speller->loadDictionary('path/to/english.aspell');
+
+// Check a LaTeX document
+$misspelled = $speller->checkDocument($latexContent, 'latex');
+
+foreach ($misspelled as $word => $suggestions) {
+    echo "Misspelled: $word\n";
+}
+```
+
 ### Phonetic Transformation
 The `PhoneticTransformer` converts words into their phonetic representation based on language rules.
 

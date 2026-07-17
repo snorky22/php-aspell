@@ -44,7 +44,7 @@ class AspellBinaryParser implements WordListInterface
         }
 
         // Read DataHead
-        $data = fread($this->handle, 112); // DataHead size is roughly this, need to be careful with alignment
+        $data = fread($this->handle, 120); 
         $head = unpack('a64check_word/Vendian_check/a16lang_hash/Vhead_size/Vblock_size/Vjump1_offset/Vjump2_offset/Vword_offset/Vhash_offset/Vword_count/Vword_buckets/Vsoundslike_count', $data);
         
         if ($head['check_word'] !== "aspell default speller rowl 1.10\0") {
@@ -117,6 +117,9 @@ class AspellBinaryParser implements WordListInterface
         for ($i = 0; $i < $len; $i++) {
             $c = ord($word[$i]);
             $clean = $this->toClean[$c] ?? $c;
+            if (is_string($clean)) {
+                $clean = ord($clean);
+            }
             if ($clean) {
                 $h = (5 * $h + $clean) & 0xFFFFFFFF;
             }
@@ -132,32 +135,32 @@ class AspellBinaryParser implements WordListInterface
 
     private function readWordEntry(&$nextOffset): WordEntry
     {
-        // Aspell words are stored as:
-        // (<flags><offset to next word><word size><word><null>)
-        // Depending on flags, it might have affix or category info
+        // Aspell words in rowl format are stored as:
+        // [1 byte word size including meta][1 byte flags][1 byte next offset][word string][null terminator]
+        // This is a simplified version for our parser
         
-        $currentPos = ftell($this->handle);
+        $sizeByte = fread($this->handle, 1);
+        if ($sizeByte === false || $sizeByte === "") {
+             return new WordEntry("", 0, null);
+        }
+        $totalSize = ord($sizeByte);
         
-        // Read the 3 bytes before the word
-        // (frequency is also there in some versions, but let's stick to the 3 bytes offset)
-        fseek($this->handle, -3, SEEK_CUR);
-        $meta = fread($this->handle, 3);
+        $meta = fread($this->handle, 2);
         $flags = ord($meta[0]);
         $nextOffset = ord($meta[1]);
-        $wordSize = ord($meta[2]);
         
-        fseek($this->handle, $currentPos);
-        $word = fread($this->handle, $wordSize);
+        $wordSize = $totalSize - 3; // totalSize includes the 3 meta bytes
+        if ($wordSize < 0) $wordSize = 0;
+        
+        $word = $wordSize > 0 ? fread($this->handle, $wordSize) : "";
         
         // Skip null terminator
-        fseek($this->handle, 1, SEEK_CUR);
+        fread($this->handle, 1);
         
         $affix = null;
         if ($flags & 0x80) { // HAVE_AFFIX_FLAG
             $affix = $this->readNullTerminatedString();
         }
-        
-        // We'll need to handle category info too if needed
         
         return new WordEntry($word, $flags, $affix);
     }
