@@ -19,7 +19,7 @@ composer require php-aspell/php-aspell
 ## Usage
 
 ### Speller Engine (High-Level API)
-The `Speller` class is the primary entry point for spell checking documents. It supports specialized modes like `latex`.
+The `Speller` class is the primary entry point for spell checking documents. It supports specialized modes like `latex`, powered by a port of the official Aspell LaTeX state-machine filter.
 
 ```php
 use Aspell\Config\AspellConfig;
@@ -29,7 +29,7 @@ $config = new AspellConfig();
 $speller = new Speller($config);
 $speller->loadDictionary('path/to/english.aspell');
 
-// Check a LaTeX document
+// Check a LaTeX document (robustly skips commands/comments while checking text)
 $misspelled = $speller->checkDocument($latexContent, 'latex');
 
 foreach ($misspelled as $word => $suggestions) {

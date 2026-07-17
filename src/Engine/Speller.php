@@ -64,7 +64,8 @@ class Speller
     public function checkDocument(string $text, string $mode = 'text'): array
     {
         if ($mode === 'tex' || $mode === 'latex') {
-            $text = $this->filterLaTeX($text);
+            $filter = new TexFilter();
+            $text = $filter->filter($text);
         }
 
         $misspelled = [];
@@ -78,21 +79,5 @@ class Speller
         }
 
         return $misspelled;
-    }
-
-    private function filterLaTeX(string $text): string
-    {
-        // Remove comments
-        $text = preg_replace('/(?<!\\\\)%.*/', '', $text);
-        
-        // Replace commands like \command{...} with just spaces for the command name
-        // but keep the content in brackets for checking (depending on command)
-        // For simplicity, we just strip commands starting with \
-        $text = preg_replace('/\\\\[a-zA-Z]+(\[[^\]]*\])?(\{([^\}]*)\})?/', ' ', $text);
-        
-        // Strip remaining special LaTeX characters
-        $text = str_replace(['{', '}', '$', '&', '_', '^'], ' ', $text);
-        
-        return $text;
     }
 }
