@@ -160,11 +160,22 @@ function handleCheck(array $dictionaries): array
  */
 function buildCorrectedText(string $text, string $rx, array $suggestByLower): string
 {
-    return preg_replace_callback($rx, static function (array $m) use ($suggestByLower): string {
-        $orig = $m[1];
-        $best = $suggestByLower[mb_strtolower($orig, 'UTF-8')][0] ?? null;
-        return $best === null ? $orig : matchCase($orig, $best);
-    }, $text) ?? $text;
+    // Replace each occurrence with the top suggestion for that word, keeping
+    // its original capitalisation (cf. proofread() in the README).
+    $callback = static function (array $match) use ($suggestByLower): string {
+        $original = $match[1];
+        $key      = mb_strtolower($original, 'UTF-8');
+
+        // No suggestion for this word: keep it untouched.
+        if (empty($suggestByLower[$key])) {
+            return $original;
+        }
+
+        // Transfer the original word's capitalisation onto the suggestion.
+        return matchCase($original, $suggestByLower[$key][0]);
+    };
+
+    return preg_replace_callback($rx, $callback, $text) ?? $text;
 }
 
 /**
@@ -190,17 +201,17 @@ function buildPreviewHtml(string $text, string $rx, array $suggestByLower): stri
     }, $escaped) ?? $escaped;
 }
 
-/** Transfer the capitalisation of $model onto $word (ALLCAPS / Titlecase / as-is). */
-function matchCase(string $model, string $word): string
+/** Transfer the capitalisation of $model onto $replacement (ALLCAPS / Titlecase / as-is). */
+function matchCase(string $model, string $replacement): string
 {
     if (mb_strtoupper($model, 'UTF-8') === $model && mb_strtolower($model, 'UTF-8') !== $model) {
-        return mb_strtoupper($word, 'UTF-8');
+        return mb_strtoupper($replacement, 'UTF-8');
     }
     $first = mb_substr($model, 0, 1, 'UTF-8');
     if (mb_strtoupper($first, 'UTF-8') === $first && mb_strtolower($first, 'UTF-8') !== $first) {
-        return mb_strtoupper(mb_substr($word, 0, 1, 'UTF-8'), 'UTF-8') . mb_substr($word, 1, null, 'UTF-8');
+        return mb_strtoupper(mb_substr($replacement, 0, 1, 'UTF-8'), 'UTF-8') . mb_substr($replacement, 1, null, 'UTF-8');
     }
-    return $word;
+    return $replacement;
 }
 
 // ---------------------------------------------------------------------------
