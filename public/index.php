@@ -88,7 +88,8 @@ function handleCheck(array $dictionaries): array
     $found = $speller->checkDocument($text, $mode);
     $checkMs = (int) round((microtime(true) - $t0) * 1000);
 
-    // Aggregate unique misspellings, keeping first-seen order.
+    // Count occurrences per unique word, keeping first-seen order.
+    // (Replacement is whole-word on the client, so positions aren't needed.)
     $counts = [];
     foreach ($found as $f) {
         $w = $f['word'];
@@ -115,7 +116,8 @@ function handleCheck(array $dictionaries): array
                 $i++;
             }
         }
-        $misspellings[] = ['word' => $w, 'count' => $counts[$w], 'suggestions' => $sugg];
+        // Keyed by the (unique) misspelled word; preserves first-seen order.
+        $misspellings[$w] = ['count' => $counts[$w], 'suggestions' => $sugg];
     }
     if ($wantSuggest) {
         $suggestMs = (int) round((microtime(true) - $tSug) * 1000);
@@ -390,19 +392,21 @@ function render(d) {
   }
 
   const box = $('miss');
-  if (!d.misspellings.length) {
+  // misspellings is an object keyed by the (unique) misspelled word.
+  const entries = Object.entries(d.misspellings);
+  if (!entries.length) {
     box.innerHTML = '<div class="empty">No misspellings. ✓</div>';
     return;
   }
   box.innerHTML = '';
-  for (const m of d.misspellings) {
+  for (const [word, m] of entries) {
     const el = document.createElement('div');
     el.className = 'miss';
-    let html = '<span class="w">' + escapeHtml(m.word) + '</span>'
+    let html = '<span class="w">' + escapeHtml(word) + '</span>'
       + '<span class="cnt">×' + m.count + '</span>';
     if (m.suggestions && m.suggestions.length) {
       html += '<div class="chips">' +
-        m.suggestions.map(s => '<span class="chip" data-w="' + escapeAttr(m.word)
+        m.suggestions.map(s => '<span class="chip" data-w="' + escapeAttr(word)
           + '" data-s="' + escapeAttr(s) + '">' + escapeHtml(s) + '</span>').join('') +
         '</div>';
     } else {
@@ -417,9 +421,24 @@ function render(d) {
   }));
 }
 
+/**
+ * Return `text` with every whole-word occurrence of `word` replaced by
+ * `replacement`, preserving each occurrence's own capitalisation.
+ *
+ * "Whole word" uses the same boundaries as the server's misspellingRegex():
+ * a match may not be flanked by a letter or an apostrophe. So contractions
+ * stay intact and substrings are never touched — correcting "the" leaves
+ * "theme" alone. The `u` flag makes \p{L} Unicode-aware, so it is safe for
+ * any language/script without dealing with byte or code-unit offsets.
+ */
+function replaceWord(text, word, replacement) {
+  const rx = new RegExp("(?<![\\p{L}'])" + escapeRegex(word) + "(?![\\p{L}'])", 'giu');
+  return text.replace(rx, (match) => matchCase(match, replacement));
+}
+
 function applySuggestion(word, suggestion) {
-  const rx = new RegExp('(?<![\\p{L}\'])(' + escapeRegex(word) + ')(?![\\p{L}\'])', 'giu');
-  $('corrected').value = $('corrected').value.replace(rx, (m) => matchCase(m, suggestion));
+  const el = $('corrected');
+  el.value = replaceWord(el.value, word, suggestion);
 }
 
 function matchCase(model, word) {
