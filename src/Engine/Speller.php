@@ -6,14 +6,19 @@ namespace Aspell\Engine;
 
 use Aspell\Config\AspellConfig;
 use Aspell\Dictionary\AspellBinaryParser;
+use Aspell\Dictionary\CustomDictionary;
 
 /**
  * High-level Speller class that orchestrates the spell checking process.
  */
 class Speller
 {
-    /** @var AspellBinaryParser[] */
+    /** @var array<AspellBinaryParser|CustomDictionary> */
     private array $dictionaries = [];
+
+    /** Writable dictionary that runtime-added words are stored in. */
+    private ?CustomDictionary $customDictionary = null;
+
     private PhoneticTransformer $phoneticTransformer;
     private SuggestionEngine $suggestionEngine;
 
@@ -110,6 +115,67 @@ class Speller
 
         // Try to load phonetic rules automatically
         $this->autoLoadPhoneticRules($dir, $stem);
+    }
+
+    /**
+     * Loads (or creates) a writable custom dictionary that is checked in
+     * addition to the language dictionaries. Words added via {@see addWord()}
+     * are stored here and persisted to $path in Aspell's personal word list
+     * format. Only one custom dictionary is active at a time; calling this again
+     * replaces the previous one.
+     */
+    public function loadCustomDictionary(string $path): void
+    {
+        $lang = (string) ($this->config->retrieve('lang') ?? 'en');
+        $this->setCustomDictionary(new CustomDictionary($path, $lang));
+    }
+
+    /**
+     * Registers a custom dictionary instance, replacing any previous one. Useful
+     * for supplying an in-memory (non-persistent) dictionary directly.
+     */
+    public function setCustomDictionary(CustomDictionary $dictionary): void
+    {
+        // Drop the previous custom dictionary from the active list, if any.
+        if ($this->customDictionary !== null) {
+            $this->dictionaries = array_values(array_filter(
+                $this->dictionaries,
+                fn ($dict) => $dict !== $this->customDictionary
+            ));
+        }
+
+        $this->customDictionary = $dictionary;
+        $this->dictionaries[] = $dictionary;
+
+        // A new set of words invalidates the memoised word list / index.
+        $this->loadedWords = null;
+        $this->wordIndex = null;
+    }
+
+    /**
+     * Adds a word to the custom dictionary so it is treated as correctly spelled
+     * from now on (and persisted, if the custom dictionary is backed by a file).
+     *
+     * If no custom dictionary has been configured, an in-memory one is created
+     * automatically; call {@see loadCustomDictionary()} first for persistence.
+     *
+     * @return bool false if the word was already known to the custom dictionary.
+     */
+    public function addWord(string $word): bool
+    {
+        if ($this->customDictionary === null) {
+            $this->setCustomDictionary(new CustomDictionary());
+        }
+
+        $added = $this->customDictionary->addWord($word);
+
+        if ($added) {
+            // Keep the suggestion caches in sync with the new word.
+            $this->loadedWords = null;
+            $this->wordIndex = null;
+        }
+
+        return $added;
     }
 
     private function autoLoadPhoneticRules(string $dir, string $stem): void
@@ -259,7 +325,11 @@ class Speller
         if ($this->wordIndex === null) {
             $this->wordIndex = [];
             foreach ($this->getLoadedWords() as $cand) {
-                $this->wordIndex[mb_substr($cand, 0, 1, 'UTF-8')][] = $cand;
+                // Key on the lowercased first character so mixed-case entries
+                // (e.g. custom-dictionary words like "Symfony") are reachable
+                // from the lowercased query used in suggest().
+                $first = mb_strtolower(mb_substr($cand, 0, 1, 'UTF-8'), 'UTF-8');
+                $this->wordIndex[$first][] = $cand;
             }
         }
         return $this->wordIndex;

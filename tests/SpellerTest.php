@@ -60,6 +60,47 @@ class SpellerTest extends TestCase
         $this->assertFalse($speller->check('xqzwff'));
     }
 
+    /** A word added at runtime is treated as correctly spelled. */
+    public function testAddWordMakesWordKnown(): void
+    {
+        $speller = $this->spellerWithWords(['la', 'de']);
+
+        $this->assertFalse($speller->check('Symfony'));
+        $this->assertTrue($speller->addWord('Symfony'));
+        $this->assertTrue($speller->check('Symfony'));
+        // Case-insensitive, like the compiled dictionaries.
+        $this->assertTrue($speller->check('symfony'));
+        // Adding the same word again reports "already known".
+        $this->assertFalse($speller->addWord('Symfony'));
+    }
+
+    /** Added words feed the suggestion engine too. */
+    public function testAddedWordAppearsInSuggestions(): void
+    {
+        $speller = $this->spellerWithWords(['la', 'de']);
+        $speller->addWord('Symfony');
+
+        $this->assertContains('Symfony', $speller->suggest('Symfont'));
+    }
+
+    /** A file-backed custom dictionary persists added words across instances. */
+    public function testLoadCustomDictionaryPersistsWords(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'aspell_custom_') ?: '';
+        try {
+            $speller = $this->spellerWithWords(['la', 'de']);
+            $speller->loadCustomDictionary($path);
+            $speller->addWord('Kubernetes');
+
+            // A fresh speller loading the same file already knows the word.
+            $reloaded = $this->spellerWithWords(['la', 'de']);
+            $reloaded->loadCustomDictionary($path);
+            $this->assertTrue($reloaded->check('Kubernetes'));
+        } finally {
+            @unlink($path);
+        }
+    }
+
     /** checkDocument honours the `ignore` option (default 1): single chars are skipped. */
     public function testCheckDocumentIgnoresSingleCharacters(): void
     {

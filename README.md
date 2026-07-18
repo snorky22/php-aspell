@@ -52,6 +52,31 @@ $latexContent = file_get_contents('paper.tex');
 $misspelled = $speller->checkDocument($latexContent, 'latex');
 ```
 
+#### Example: Custom (personal) dictionary
+You can load a writable custom dictionary that is checked *in addition to* the
+language dictionary, and add words to it at runtime. When backed by a file, the
+words are persisted in GNU Aspell's plain-text personal word list format
+(`personal_ws-1.1 <lang> <count> utf-8`, one word per line) so they survive
+across requests.
+
+```php
+$speller->loadDictionary('path/to/dictionaries/en.multi');
+
+// Bind a persistent custom dictionary (created if it does not yet exist).
+$speller->loadCustomDictionary('path/to/user.pws');
+
+$speller->check('Kubernetes');   // false
+$speller->addWord('Kubernetes'); // true (added + written to user.pws)
+$speller->check('Kubernetes');   // true — now accepted alongside the language dict
+
+// addWord() also works without a bound file (in-memory only, not persisted):
+$speller->addWord('Symfony');
+```
+
+`addWord()` returns `false` if the word was already known to the custom
+dictionary. Matching is case-insensitive, and added words also feed the
+suggestion engine.
+
 #### Verification on PINN_FINAL.tex
 The library has been verified against large scientific LaTeX documents (e.g., `PINN_FINAL.tex`). The `TexFilter` correctly:
 - Skips LaTeX commands and their ignored parameters (e.g., `\cite{...}`, `\usepackage{...}`).
