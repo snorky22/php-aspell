@@ -29,6 +29,27 @@ class Speller
 
     /** @var array<string, string[]>|null First-character bucket index. */
     private ?array $wordIndex = null;
+    public static array $citeCommands = [
+        '\cite',
+        '\citep',
+        '\citet',
+        '\citep*',
+        '\citet*',
+        '\citealt',
+        '\citealt*',
+        '\citealp',
+        '\citealp*',
+        '\citeauthor',
+        '\citeauthor*',
+        '\citenum',
+        '\citetext'
+    ];
+    public static array $refCommands = [
+        '\ref',
+        '\ref*',
+        '\autoref',
+        '\subref',
+    ];
 
     public function __construct(
         private readonly AspellConfig $config
@@ -357,12 +378,42 @@ class Speller
     }
 
     /**
+     * TexFilter rules that ignore the {…} argument of each given command. Used
+     * for citation and cross-reference commands (\cite…, \ref…), whose
+     * arguments are keys/labels rather than real words — the same treatment
+     * TexFilter already gives \label.
+     *
+     * @param list<string> $commands command names, with or without a leading
+     *                                backslash and an optional trailing star
+     * @return array<string, string> bare command name => 'p' (ignore its {…})
+     */
+    private function commandArgRules(array $commands): array
+    {
+        $rules = [];
+        foreach ($commands as $command) {
+            // TexFilter keys on the bare command name and handles a trailing
+            // star ("\citep*", "\ref*") itself, so strip the backslash and star.
+            $name = rtrim(ltrim($command, '\\'), '*');
+            if ($name !== '') {
+                $rules[$name] = 'p';
+            }
+        }
+        return $rules;
+    }
+
+    /**
      * Checks a whole document, skipping LaTeX commands if requested.
      */
     public function checkDocument(string $text, string $mode = 'text'): array
     {
         if ($mode === 'tex' || $mode === 'latex') {
-            $filter = new TexFilter();
+            // Citation and cross-reference commands (\cite, \citep, \ref,
+            // \autoref, …) carry keys/labels, not prose, so their arguments
+            // must not be spell-checked.
+            $rules = $this->commandArgRules(
+                array_merge(self::$citeCommands, self::$refCommands)
+            );
+            $filter = new TexFilter($rules);
             $text = $filter->filter($text);
         }
 
