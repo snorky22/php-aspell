@@ -2,7 +2,6 @@
     "name": "php-aspell/php-aspell",
     "description": "A pure PHP 8.4 port of GNU Aspell with native LaTeX-aware spell checking",
     "type": "library",
-    "version": "1.2.0",
     "keywords": [
         "aspell",
         "spell-check",
