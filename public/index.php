@@ -122,29 +122,13 @@ function handleCheck(array $dictionaries): array
     }
 
     // --- Corrected text + highlighted preview -----------------------------
-    $corrected = $text;
-    $previewHtml = htmlspecialchars($text, ENT_NOQUOTES, 'UTF-8');
-
-    if ($unique !== []) {
-        $alt = implode('|', array_map(static fn($w) => preg_quote($w, '/'), $unique));
-        // Apostrophes are word-internal; match on whole words only.
-        $rx = '/(?<![\p{L}\'])(' . $alt . ')(?![\p{L}\'])/iu';
-
-        $corrected = preg_replace_callback($rx, static function (array $m) use ($suggestByLower): string {
-            $orig = $m[1];
-            $best = $suggestByLower[mb_strtolower($orig, 'UTF-8')][0] ?? null;
-            return $best === null ? $orig : matchCase($orig, $best);
-        }, $text) ?? $text;
-
-        // Preview is built over the escaped text (the pattern only matches
-        // letters/apostrophes, which escaping leaves untouched).
-        $previewHtml = preg_replace_callback($rx, static function (array $m) use ($suggestByLower): string {
-            $orig = $m[1];
-            $sugg = $suggestByLower[mb_strtolower($orig, 'UTF-8')] ?? [];
-            $title = $sugg === [] ? 'no suggestions' : implode(', ', array_slice($sugg, 0, 5));
-            return '<mark title="' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '">'
-                . htmlspecialchars($orig, ENT_NOQUOTES, 'UTF-8') . '</mark>';
-        }, htmlspecialchars($text, ENT_NOQUOTES, 'UTF-8')) ?? $previewHtml;
+    if ($unique === []) {
+        $corrected   = $text;
+        $previewHtml = htmlspecialchars($text, ENT_NOQUOTES, 'UTF-8');
+    } else {
+        $rx          = $speller->misspellingRegex($unique);
+        $corrected   = buildCorrectedText($text, $rx, $suggestByLower);
+        $previewHtml = buildPreviewHtml($text, $rx, $suggestByLower);
     }
 
     return [
@@ -164,6 +148,46 @@ function handleCheck(array $dictionaries): array
         'previewHtml'   => $previewHtml,
         'misspellings'  => $misspellings,
     ];
+}
+
+/**
+ * Plain-text correction: replace each misspelling with its top suggestion,
+ * preserving the original capitalisation. Pure response data — no markup.
+ *
+ * @param string                       $text           original (unescaped) text
+ * @param string                       $rx             regex from misspellingRegex()
+ * @param array<string, list<string>>  $suggestByLower suggestions keyed by lowercased word
+ */
+function buildCorrectedText(string $text, string $rx, array $suggestByLower): string
+{
+    return preg_replace_callback($rx, static function (array $m) use ($suggestByLower): string {
+        $orig = $m[1];
+        $best = $suggestByLower[mb_strtolower($orig, 'UTF-8')][0] ?? null;
+        return $best === null ? $orig : matchCase($orig, $best);
+    }, $text) ?? $text;
+}
+
+/**
+ * HTML preview: escape the text, then wrap each misspelling in a <mark> whose
+ * tooltip lists suggestions. Presentation only. The pattern only matches
+ * letters/apostrophes, which HTML-escaping leaves untouched, so it is safe to
+ * run the replacement over the already-escaped text.
+ *
+ * @param string                       $text           original (unescaped) text
+ * @param string                       $rx             regex from misspellingRegex()
+ * @param array<string, list<string>>  $suggestByLower suggestions keyed by lowercased word
+ */
+function buildPreviewHtml(string $text, string $rx, array $suggestByLower): string
+{
+    $escaped = htmlspecialchars($text, ENT_NOQUOTES, 'UTF-8');
+
+    return preg_replace_callback($rx, static function (array $m) use ($suggestByLower): string {
+        $orig  = $m[1];
+        $sugg  = $suggestByLower[mb_strtolower($orig, 'UTF-8')] ?? [];
+        $title = $sugg === [] ? 'no suggestions' : implode(', ', array_slice($sugg, 0, 5));
+        return '<mark title="' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '">'
+            . htmlspecialchars($orig, ENT_NOQUOTES, 'UTF-8') . '</mark>';
+    }, $escaped) ?? $escaped;
 }
 
 /** Transfer the capitalisation of $model onto $word (ALLCAPS / Titlecase / as-is). */

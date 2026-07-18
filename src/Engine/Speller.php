@@ -336,6 +336,27 @@ class Speller
     }
 
     /**
+     * Builds a whole-word alternation regex that locates every given word in a
+     * body of text. Output-format agnostic: callers reuse it both to apply
+     * corrections to plain text and to highlight matches in HTML. Apostrophes
+     * are treated as word-internal (matching {@see checkDocument()}'s tokenizer)
+     * so contractions such as "don't" are matched whole.
+     *
+     * @param list<string> $words words to match (e.g. unique misspellings)
+     * @return string PCRE pattern, or '' when $words is empty
+     */
+    public function misspellingRegex(array $words): string
+    {
+        if ($words === []) {
+            return '';
+        }
+
+        $alt = implode('|', array_map(static fn ($w) => preg_quote($w, '/'), $words));
+        // Apostrophes are word-internal; match on whole words only.
+        return '/(?<![\p{L}\'])(' . $alt . ')(?![\p{L}\'])/iu';
+    }
+
+    /**
      * Checks a whole document, skipping LaTeX commands if requested.
      */
     public function checkDocument(string $text, string $mode = 'text'): array
