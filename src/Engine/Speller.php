@@ -402,11 +402,33 @@ class Speller
     }
 
     /**
+     * Blanks out the entire thebibliography environment. The reference list is
+     * auto-generated bibliographic metadata (author surnames, journal names,
+     * cite keys such as "halloran1997study") rather than prose, so checking it
+     * only produces noise. The matched span is replaced with an equal-length
+     * run of spaces so byte offsets into $text stay valid for callers that use
+     * them.
+     */
+    private function stripBibliography(string $text): string
+    {
+        return (string) preg_replace_callback(
+            '/\\\\begin\s*\{thebibliography\}.*?\\\\end\s*\{thebibliography\}/su',
+            static fn (array $m): string => str_repeat(' ', strlen($m[0])),
+            $text
+        );
+    }
+
+    /**
      * Checks a whole document, skipping LaTeX commands if requested.
      */
     public function checkDocument(string $text, string $mode = 'text'): array
     {
         if ($mode === 'tex' || $mode === 'latex') {
+            // The reference list is machine-generated metadata (author names,
+            // journal titles, cite keys), not prose — drop the whole
+            // thebibliography environment before checking anything.
+            $text = $this->stripBibliography($text);
+
             // Citation and cross-reference commands (\cite, \citep, \ref,
             // \autoref, …) carry keys/labels, not prose, so their arguments
             // must not be spell-checked.

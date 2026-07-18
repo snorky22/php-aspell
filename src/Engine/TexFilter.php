@@ -30,6 +30,11 @@ class TexFilter
         $this->commands = array_merge([
             'cite' => 'p',
             'nocite' => 'p',
+            // \bibitem[<author-year label>]{<key>}: ignore both the optional
+            // label and the mandatory cite key. Without this the key leaks
+            // through the filter, and since the tokenizer splits on digits,
+            // "halloran1997study" becomes the misspelling "halloran".
+            'bibitem' => 'op',
             'ref' => 'p',
             'eqref' => 'p',
             'label' => 'p',
