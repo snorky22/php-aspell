@@ -77,6 +77,139 @@ $speller->addWord('Symfony');
 dictionary. Matching is case-insensitive, and added words also feed the
 suggestion engine.
 
+#### Example: Locating misspellings in text with `misspellingRegex()`
+`checkDocument()` tells you *which* words are misspelled; `misspellingRegex()`
+gives you a compiled PCRE pattern that finds *where* those words occur in the
+original text so you can act on each occurrence — apply a correction, highlight
+a match, count occurrences, etc. It is output-format agnostic: the same pattern
+drives plain-text replacement and HTML highlighting alike.
+
+The method below proofreads a piece of text. Each stage of the process is a
+separate, clearly labelled step: identify the misspelled words, build the
+pattern, locate the occurrences, and — only if asked — replace them while
+preserving each occurrence's original capitalisation.
+
+First, a small helper that transfers the capitalisation of the word found in
+the text onto the (lower-cased) suggestion, so `Teh` becomes `The` and `TEH`
+becomes `THE`:
+
+```php
+/**
+ * Transfer the capitalisation of $model (the word as it appeared in the text)
+ * onto $replacement: ALL CAPS, Titlecase, or left as-is.
+ */
+function matchCase(string $model, string $replacement): string
+{
+    // "WORD" -> replacement entirely in upper case.
+    if (mb_strtoupper($model, 'UTF-8') === $model && mb_strtolower($model, 'UTF-8') !== $model) {
+        return mb_strtoupper($replacement, 'UTF-8');
+    }
+
+    // "Word" -> capitalise only the first letter of the replacement.
+    $firstChar = mb_substr($model, 0, 1, 'UTF-8');
+    if (mb_strtoupper($firstChar, 'UTF-8') === $firstChar && mb_strtolower($firstChar, 'UTF-8') !== $firstChar) {
+        $head = mb_strtoupper(mb_substr($replacement, 0, 1, 'UTF-8'), 'UTF-8');
+        $tail = mb_substr($replacement, 1, null, 'UTF-8');
+        return $head . $tail;
+    }
+
+    // "word" -> leave the replacement untouched.
+    return $replacement;
+}
+```
+
+Now the proofreader itself:
+
+```php
+use Aspell\Engine\Speller;
+
+/**
+ * Proofread $text.
+ *
+ * @return array{occurrences: list<array{word: string, offset: int}>, text: string}
+ *         The located misspellings and, when $fix is true, the corrected text.
+ */
+function proofread(Speller $speller, string $text, bool $fix = false): array
+{
+    // --- Step 1: identify the misspelled words ---------------------------
+    // checkDocument() returns one entry per occurrence, so reduce the result
+    // to the unique set of misspelled words.
+    $found = $speller->checkDocument($text);
+    $words = array_values(array_unique(array_column($found, 'word')));
+
+    if ($words === []) {
+        return ['occurrences' => [], 'text' => $text]; // nothing to do
+    }
+
+    // --- Step 2: build one pattern that matches all those words -----------
+    $rx = $speller->misspellingRegex($words);
+
+    // --- Step 3: locate every occurrence in the text ---------------------
+    // PREG_OFFSET_CAPTURE records where each match starts in $text.
+    preg_match_all($rx, $text, $matches, PREG_OFFSET_CAPTURE);
+
+    $occurrences = [];
+    foreach ($matches[1] as $match) {
+        $occurrences[] = [
+            'word'   => $match[0], // the word exactly as it appears in $text
+            'offset' => $match[1], // its byte offset within $text
+        ];
+    }
+
+    // When we only need to locate misspellings, stop here.
+    if (!$fix) {
+        return ['occurrences' => $occurrences, 'text' => $text];
+    }
+
+    // --- Step 4: choose the best suggestion for each word ----------------
+    // Key the map by the lower-cased word, so an occurrence of any
+    // capitalisation ("sentance", "Sentance", "SENTANCE") resolves to the
+    // same suggestion in Step 5.
+    $suggestionByLower = [];
+    foreach ($words as $word) {
+        $suggestions = $speller->suggest($word);
+        if ($suggestions !== []) {
+            $suggestionByLower[mb_strtolower($word, 'UTF-8')] = $suggestions[0];
+        }
+    }
+
+    // --- Step 5: replace each occurrence, preserving its capitalisation --
+    $callback = function (array $match) use ($suggestionByLower): string {
+        $original = $match[1];
+        $key      = mb_strtolower($original, 'UTF-8');
+
+        // No suggestion for this word: keep it untouched.
+        if (!isset($suggestionByLower[$key])) {
+            return $original;
+        }
+
+        // Transfer the original word's capitalisation onto the suggestion.
+        return matchCase($original, $suggestionByLower[$key]);
+    };
+
+    $corrected = preg_replace_callback($rx, $callback, $text);
+
+    return ['occurrences' => $occurrences, 'text' => $corrected];
+}
+
+// Locate misspellings only:
+$report = proofread($speller, 'This sentance has a fwe misspeled words.');
+// $report['occurrences'] => [['word' => 'sentance', 'offset' => 5], ...]
+
+// Locate and correct — note how the case of each word is preserved:
+$report = proofread($speller, 'Sentance has a fwe MISSPELED words.', true);
+// $report['text'] => 'Sentence has a few MISSPELLED words.'
+```
+
+The pattern matches **whole words only** and treats apostrophes as
+word-internal — consistent with `checkDocument()`'s tokenizer — so contractions
+such as `don't` are matched as a unit rather than as `don`. It is built with the
+case-insensitive (`i`) and Unicode (`u`) flags, so matches are found regardless
+of capitalisation and across scripts. Each candidate word is passed through
+`preg_quote()`, so words containing regex metacharacters are matched literally.
+`public/index.php` uses this method to build both its corrected-text output and
+its highlighted HTML preview from a single pattern.
+
 #### Verification on PINN_FINAL.tex
 The library has been verified against large scientific LaTeX documents (e.g., `PINN_FINAL.tex`). The `TexFilter` correctly:
 - Skips LaTeX commands and their ignored parameters (e.g., `\cite{...}`, `\usepackage{...}`).
