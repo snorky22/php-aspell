@@ -286,6 +286,7 @@ TEX;
   .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
   .chip { background:var(--chip); border:1px solid var(--line); border-radius:999px; padding:3px 10px; font-size:12px; cursor:pointer; }
   .chip:hover { border-color:var(--accent); color:var(--accent); }
+  .chip.sel { background:var(--accent); border-color:var(--accent); color:#08111f; font-weight:600; }
   .copied { color:var(--good); font-size:12px; margin-left:8px; }
   .err { color:var(--bad); }
   .empty { color:var(--muted); }
@@ -323,7 +324,7 @@ TEX;
     <h2>Result</h2>
     <div id="diag" class="diag"></div>
 
-    <label for="corrected">Corrected text <span class="hint">(top suggestion auto-applied)</span></label>
+    <label for="corrected">Corrected text <span class="hint">(top suggestion auto-applied; click a pill to change)</span></label>
     <textarea id="corrected" spellcheck="false" readonly></textarea>
     <div class="row">
       <button class="ghost" id="copy">Copy corrected text</button>
@@ -341,23 +342,28 @@ TEX;
 <script>
 const $ = (id) => document.getElementById(id);
 
+let baseText = '';   // the exact text last checked (corrections are derived from it)
+let chosen = {};     // lowercased misspelled word -> currently chosen suggestion
+
 async function run() {
   const btn = $('run');
   btn.disabled = true; btn.textContent = 'Checking…';
   $('diag').innerHTML = '';
   try {
+    const submitted = $('text').value;
     const res = await fetch(window.location.pathname, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         dict: $('dict').value,
-        text: $('text').value,
+        text: submitted,
         latex: $('latex').checked,
         suggest: $('suggest').checked,
       }),
     });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || 'Request failed');
+    baseText = submitted;   // corrections are rebuilt from the checked text
     render(data);
   } catch (e) {
     $('diag').innerHTML = '<div class="stat err">Error: ' + escapeHtml(e.message) + '</div>';
@@ -380,7 +386,16 @@ function render(d) {
     stat('check', g.checkMs + ' ms') +
     stat('suggest', g.suggestMs + ' ms' + (g.suggestCapped ? ' (capped)' : ''));
 
-  $('corrected').value = d.correctedText;
+  // The server pre-applies each word's top suggestion; remember that choice
+  // per word so clicking another pill can re-decide. The corrected text is
+  // always rebuilt from baseText via rebuildCorrected().
+  chosen = {};
+  for (const [word, m] of Object.entries(d.misspellings)) {
+    if (m.suggestions && m.suggestions.length) {
+      chosen[word.toLowerCase()] = m.suggestions[0];
+    }
+  }
+  rebuildCorrected();
 
   const prev = $('preview');
   if (g.uniqueCount === 0) {
@@ -406,7 +421,8 @@ function render(d) {
       + '<span class="cnt">×' + m.count + '</span>';
     if (m.suggestions && m.suggestions.length) {
       html += '<div class="chips">' +
-        m.suggestions.map(s => '<span class="chip" data-w="' + escapeAttr(word)
+        m.suggestions.map((s, i) => '<span class="chip' + (i === 0 ? ' sel' : '')
+          + '" data-w="' + escapeAttr(word)
           + '" data-s="' + escapeAttr(s) + '">' + escapeHtml(s) + '</span>').join('') +
         '</div>';
     } else {
@@ -415,9 +431,13 @@ function render(d) {
     el.innerHTML = html;
     box.appendChild(el);
   }
-  // Click a suggestion to apply it to the corrected text (all occurrences).
+  // Click a suggestion pill to apply it to the corrected text (all occurrences
+  // of that word) and mark it as the active choice within its word's group.
   box.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
-    applySuggestion(c.dataset.w, c.dataset.s);
+    chosen[c.dataset.w.toLowerCase()] = c.dataset.s;
+    rebuildCorrected();
+    c.parentElement.querySelectorAll('.chip').forEach(x => x.classList.remove('sel'));
+    c.classList.add('sel');
   }));
 }
 
@@ -436,9 +456,18 @@ function replaceWord(text, word, replacement) {
   return text.replace(rx, (match) => matchCase(match, replacement));
 }
 
-function applySuggestion(word, suggestion) {
-  const el = $('corrected');
-  el.value = replaceWord(el.value, word, suggestion);
+/**
+ * Rebuild the corrected textarea from the text that was last checked, applying
+ * the suggestion currently chosen for each misspelled word. Rebuilding from the
+ * original (rather than editing in place) lets a pill be re-clicked to pick a
+ * different suggestion at any time.
+ */
+function rebuildCorrected() {
+  let text = baseText;
+  for (const [word, suggestion] of Object.entries(chosen)) {
+    text = replaceWord(text, word, suggestion);
+  }
+  $('corrected').value = text;
 }
 
 function matchCase(model, word) {
