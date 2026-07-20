@@ -65,4 +65,66 @@ class CustomDictionaryTest extends TestCase
         $this->assertTrue($reloaded->lookup('kubernetes'));
         $this->assertSame(['Kubernetes'], $reloaded->getWords());
     }
+
+    public function testToJsonEmitsLangAndUnescapedUnicode(): void
+    {
+        $dict = new CustomDictionary(null, 'fr');
+        $dict->addWord('Symfony');
+        $dict->addWord('café');
+
+        $json = $dict->toJson();
+
+        // Multibyte characters stay as UTF-8, not \uXXXX escapes.
+        $this->assertStringContainsString('café', $json);
+        $this->assertSame(
+            ['lang' => 'fr', 'words' => ['Symfony', 'café']],
+            json_decode($json, true)
+        );
+    }
+
+    public function testJsonRoundTripPreservesWordsAndLang(): void
+    {
+        $original = new CustomDictionary(null, 'fr');
+        $original->addWord('Symfony');
+        $original->addWord('café'); // multibyte
+
+        $restored = CustomDictionary::fromJson($original->toJson());
+
+        $this->assertSame(['Symfony', 'café'], $restored->getWords());
+        $this->assertTrue($restored->lookup('symfony')); // case-insensitive
+        $this->assertTrue($restored->lookup('CAFÉ'));
+        // Lang survived the round-trip.
+        $this->assertStringContainsString('"lang":"fr"', $restored->toJson());
+    }
+
+    public function testFromJsonAcceptsBareWordArray(): void
+    {
+        $dict = CustomDictionary::fromJson('["Symfony","café"]', null, 'de');
+
+        $this->assertSame(['Symfony', 'café'], $dict->getWords());
+        // Falls back to the supplied $lang when the JSON carries none.
+        $this->assertStringContainsString('"lang":"de"', $dict->toJson());
+    }
+
+    public function testFromJsonBindsPathWhenProvided(): void
+    {
+        $dict = CustomDictionary::fromJson('{"lang":"fr","words":["Symfony"]}', $this->path);
+
+        // Binding a path means the words are persisted in the Aspell format.
+        $lines = file($this->path, FILE_IGNORE_NEW_LINES);
+        $this->assertSame('personal_ws-1.1 fr 1 utf-8', $lines[0]);
+        $this->assertSame('Symfony', $lines[1]);
+    }
+
+    public function testFromJsonRejectsInvalidJson(): void
+    {
+        $this->expectException(\JsonException::class);
+        CustomDictionary::fromJson('{not valid json');
+    }
+
+    public function testFromJsonRejectsNonListNonObject(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        CustomDictionary::fromJson('42');
+    }
 }

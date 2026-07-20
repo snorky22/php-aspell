@@ -14,6 +14,7 @@ To provide a faceless, high-performance spelling engine that can be easily integ
     - **Compressed Support**: Built-in decompression for `.cwl` (prezip) format.
     - **Multi-file Support**: Recursively parses `.multi` files for combining multiple word lists.
     - **Phonetic Rules**: Automatically loads language-specific phonetic rules from `_phonet.dat` files.
+    - **Custom Dictionaries**: Writable personal word lists, persistable to GNU Aspell's `personal_ws-1.1` file format or serialized to/from a JSON string for database storage.
 - **Suggestion Engine**: Integrated a weighted Damerau-Levenshtein edit distance algorithm for ranking spelling suggestions.
 - **LaTeX Filtering**: Advanced state-machine-based filter for LaTeX documents (ported from GNU Aspell's `tex.cpp`).
 - **Modern PHP 8.4 Features**: Utilizes property hooks, readonly classes, and asymmetric visibility for performance and safety.
@@ -76,6 +77,48 @@ $speller->addWord('Symfony');
 `addWord()` returns `false` if the word was already known to the custom
 dictionary. Matching is case-insensitive, and added words also feed the
 suggestion engine.
+
+#### Example: Serializing a custom dictionary to a string (e.g. a database)
+When you would rather store the personal word list in a database (or any other
+text store) than in a `.pws` file, the custom dictionary can be serialized to and
+from a JSON string. The JSON is UTF-8 and human-readable — multibyte words such
+as `café` are kept literal, not `\uXXXX`-escaped — so it drops straight into a
+`TEXT`/`LONGTEXT` (`utf8mb4`) column:
+
+```php
+// --- Restore before a spelling session -------------------------------------
+$json = $row['dictionary']; // JSON string read from your DB (may be empty)
+if ($json !== '') {
+    $speller->setCustomDictionaryFromJson($json);
+}
+
+// ... run the session; addWord() etc. work exactly as above ...
+$speller->addWord('Symfony');
+$speller->addWord('café');
+
+// --- Persist after the session ---------------------------------------------
+$row['dictionary'] = $speller->getCustomDictionaryAsJson();
+// e.g. {"lang":"fr","words":["Symfony","café"]}
+// UPDATE ... SET dictionary = :dictionary
+```
+
+A dictionary set from JSON is **in-memory only** — nothing is written to disk, so
+the database stays the single source of truth (and there is no per-`addWord()`
+file rewrite during the session). `getCustomDictionaryAsJson()` always returns
+valid JSON, even when no custom dictionary is configured (an empty `words` list).
+
+The same round-trip is available on the dictionary itself via
+`CustomDictionary::toJson()` and `CustomDictionary::fromJson()`. `fromJson()`
+accepts either the full `{"lang":…, "words":[…]}` object or a bare
+`["word", …]` array, and takes an optional path to bind the result to a file:
+
+```php
+use Aspell\Dictionary\CustomDictionary;
+
+$dict = CustomDictionary::fromJson($json);          // in-memory
+$dict = CustomDictionary::fromJson($json, $path);   // also persisted to $path
+$json = $dict->toJson();
+```
 
 #### Example: Finding and correcting misspellings with `misspellingRegex()`
 `checkDocument()` tells you *which* words are misspelled; `misspellingRegex()`

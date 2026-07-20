@@ -174,6 +174,36 @@ class Speller
     }
 
     /**
+     * Replaces the active custom dictionary with one rebuilt from a JSON string
+     * (as produced by {@see getCustomDictionaryAsJson()}). The resulting
+     * dictionary is in-memory only — nothing is written to disk — which is the
+     * intended shape when the persistent copy lives in a database.
+     *
+     * @see CustomDictionary::fromJson() for the accepted JSON shapes.
+     */
+    public function setCustomDictionaryFromJson(string $json): void
+    {
+        $lang = (string) ($this->config->retrieve('lang') ?? 'en');
+        $this->setCustomDictionary(CustomDictionary::fromJson($json, null, $lang));
+    }
+
+    /**
+     * Serializes the active custom dictionary to a JSON string, ready to be
+     * stored (e.g. in a database column). When no custom dictionary is
+     * configured, an empty word list is returned so callers always get valid
+     * JSON.
+     */
+    public function getCustomDictionaryAsJson(): string
+    {
+        if ($this->customDictionary === null) {
+            $lang = (string) ($this->config->retrieve('lang') ?? 'en');
+            return CustomDictionary::fromJson('[]', null, $lang)->toJson();
+        }
+
+        return $this->customDictionary->toJson();
+    }
+
+    /**
      * Adds a word to the custom dictionary so it is treated as correctly spelled
      * from now on (and persisted, if the custom dictionary is backed by a file).
      *

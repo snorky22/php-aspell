@@ -101,6 +101,46 @@ class SpellerTest extends TestCase
         }
     }
 
+    /** A dictionary set from JSON is treated as known and is queryable in-memory. */
+    public function testSetCustomDictionaryFromJson(): void
+    {
+        $speller = $this->spellerWithWords(['la', 'de']);
+
+        $this->assertFalse($speller->check('café'));
+        $speller->setCustomDictionaryFromJson('{"lang":"fr","words":["Symfony","café"]}');
+
+        $this->assertTrue($speller->check('Symfony'));
+        $this->assertTrue($speller->check('café'));      // multibyte
+        $this->assertTrue($speller->check('symfony'));   // case-insensitive
+    }
+
+    /** getCustomDictionaryAsJson round-trips through setCustomDictionaryFromJson. */
+    public function testCustomDictionaryJsonRoundTrip(): void
+    {
+        $speller = $this->spellerWithWords(['la', 'de']);
+        $speller->addWord('Symfony');
+        $speller->addWord('café');
+
+        $json = $speller->getCustomDictionaryAsJson();
+
+        $restored = $this->spellerWithWords(['la', 'de']);
+        $restored->setCustomDictionaryFromJson($json);
+
+        $this->assertTrue($restored->check('Symfony'));
+        $this->assertTrue($restored->check('café'));
+    }
+
+    /** With no custom dictionary configured, the getter still returns valid JSON. */
+    public function testGetCustomDictionaryAsJsonWhenNoneConfigured(): void
+    {
+        $speller = $this->spellerWithWords(['la', 'de']);
+
+        $decoded = json_decode($speller->getCustomDictionaryAsJson(), true);
+
+        $this->assertIsArray($decoded);
+        $this->assertSame([], $decoded['words']);
+    }
+
     /** checkDocument honours the `ignore` option (default 1): single chars are skipped. */
     public function testCheckDocumentIgnoresSingleCharacters(): void
     {

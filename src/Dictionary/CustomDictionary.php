@@ -39,6 +39,54 @@ class CustomDictionary implements WordListInterface
         }
     }
 
+    /**
+     * Rebuilds a dictionary from a JSON string produced by {@see toJson()}. Two
+     * shapes are accepted:
+     *
+     *   {"lang":"fr","words":["Symfony","café"]}   full form (preserves lang)
+     *   ["Symfony","café"]                          bare word list ($lang used)
+     *
+     * When $path is given the resulting dictionary is bound to that file (and,
+     * if the file already exists, its words are merged in first), so subsequent
+     * {@see addWord()} calls persist. Pass null for a purely in-memory instance
+     * (e.g. when the source of truth is a database column).
+     *
+     * @throws \JsonException           if $json is not valid JSON.
+     * @throws \InvalidArgumentException if the decoded value is not a list of
+     *                                   words or a {lang, words} object.
+     */
+    public static function fromJson(
+        string $json,
+        ?string $path = null,
+        string $lang = 'en',
+    ): self {
+        $data = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+
+        if (is_array($data) && array_is_list($data)) {
+            $words = $data;
+        } elseif (is_array($data)) {
+            $words = $data['words'] ?? [];
+            $lang = (string) ($data['lang'] ?? $lang);
+        } else {
+            throw new \InvalidArgumentException(
+                'Custom dictionary JSON must be a word list or a {lang, words} object.'
+            );
+        }
+
+        if (!is_array($words)) {
+            throw new \InvalidArgumentException('Custom dictionary "words" must be an array.');
+        }
+
+        $dict = new self($path, $lang);
+        foreach ($words as $word) {
+            if (is_string($word)) {
+                $dict->addWord($word);
+            }
+        }
+
+        return $dict;
+    }
+
     private function loadFile(string $path): void
     {
         $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
@@ -123,5 +171,19 @@ class CustomDictionary implements WordListInterface
     public function getWords(): array
     {
         return array_values($this->words);
+    }
+
+    /**
+     * Serializes the dictionary to a JSON string suitable for a database column
+     * or any other text store. The language token is retained so
+     * {@see fromJson()} can restore an identical instance. Multibyte characters
+     * are emitted as-is (UTF-8), not \uXXXX escapes.
+     */
+    public function toJson(): string
+    {
+        return json_encode(
+            ['lang' => $this->lang, 'words' => array_values($this->words)],
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+        );
     }
 }
