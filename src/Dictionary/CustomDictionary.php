@@ -51,16 +51,27 @@ class CustomDictionary implements WordListInterface
      * {@see addWord()} calls persist. Pass null for a purely in-memory instance
      * (e.g. when the source of truth is a database column).
      *
+     * A null, empty, or whitespace-only $json (and JSON `null`) yields an empty
+     * dictionary, so an uninitialised database column round-trips cleanly.
+     *
      * @throws \JsonException           if $json is not valid JSON.
      * @throws \InvalidArgumentException if the decoded value is not a list of
      *                                   words or a {lang, words} object.
      */
     public static function fromJson(
-        string $json,
+        ?string $json,
         ?string $path = null,
         string $lang = 'en',
     ): self {
+        if ($json === null || trim($json) === '') {
+            return new self($path, $lang);
+        }
+
         $data = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+
+        if ($data === null) {
+            return new self($path, $lang);
+        }
 
         if (is_array($data) && array_is_list($data)) {
             $words = $data;
