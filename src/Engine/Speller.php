@@ -50,6 +50,36 @@ class Speller
         '\autoref',
         '\subref',
         '\eqref',
+        '\pageref',
+        '\nameref',
+        // cleveref
+        '\cref',
+        '\Cref',
+        '\cpageref',
+        '\Cpageref',
+        '\labelcref',
+        '\namecref',
+        '\nameCref',
+        '\namecrefs',
+        '\nameCrefs',
+        // varioref
+        '\vref',
+        '\Vref',
+        '\vpageref',
+        '\Vpageref',
+    ];
+
+    /**
+     * Cross-reference commands taking two mandatory label-key arguments
+     * (e.g. \crefrange{start}{end}). Both {…} must be ignored, so these get a
+     * 'pp' rule rather than the single 'p' used for {@see $refCommands}.
+     */
+    public static array $refRangeCommands = [
+        '\crefrange',
+        '\Crefrange',
+        '\cpagerefrange',
+        '\vrefrange',
+        '\vpagerefrange',
     ];
 
     public function __construct(
@@ -416,9 +446,11 @@ class Speller
      *
      * @param list<string> $commands command names, with or without a leading
      *                                backslash and an optional trailing star
-     * @return array<string, string> bare command name => 'p' (ignore its {…})
+     * @param string $spec TexFilter rule per command; 'p' ignores one {…}
+     *                     argument, 'pp' ignores two (for range commands).
+     * @return array<string, string> bare command name => $spec
      */
-    private function commandArgRules(array $commands): array
+    private function commandArgRules(array $commands, string $spec = 'p'): array
     {
         $rules = [];
         foreach ($commands as $command) {
@@ -426,7 +458,7 @@ class Speller
             // star ("\citep*", "\ref*") itself, so strip the backslash and star.
             $name = rtrim(ltrim($command, '\\'), '*');
             if ($name !== '') {
-                $rules[$name] = 'p';
+                $rules[$name] = $spec;
             }
         }
         return $rules;
@@ -461,10 +493,14 @@ class Speller
             $text = $this->stripBibliography($text);
 
             // Citation and cross-reference commands (\cite, \citep, \ref,
-            // \autoref, …) carry keys/labels, not prose, so their arguments
-            // must not be spell-checked.
-            $rules = $this->commandArgRules(
-                array_merge(self::$citeCommands, self::$refCommands)
+            // \autoref, \cref, …) carry keys/labels, not prose, so their
+            // arguments must not be spell-checked. Range commands
+            // (\crefrange, …) take two label-key arguments, hence 'pp'.
+            $rules = array_merge(
+                $this->commandArgRules(
+                    array_merge(self::$citeCommands, self::$refCommands)
+                ),
+                $this->commandArgRules(self::$refRangeCommands, 'pp'),
             );
             $filter = new TexFilter($rules);
             $text = $filter->filter($text);

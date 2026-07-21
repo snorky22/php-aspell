@@ -155,4 +155,25 @@ class SpellerTest extends TestCase
         $this->assertNotContains('k', $flagged);
         $this->assertContains('zzz', $flagged);
     }
+
+    /**
+     * Regression: cross-reference commands beyond the base set — cleveref
+     * (\cref, \Cref, \cpageref), \nameref, varioref (\vref) and the range
+     * variants (\crefrange) — must have their label-key arguments ignored in
+     * LaTeX mode. Otherwise a colon-separated key such as "fig:example" leaks
+     * and the tokenizer splits it into "fig"/"example", which get flagged.
+     */
+    public function testCheckDocumentIgnoresCrossReferenceLabelKeys(): void
+    {
+        $speller = $this->spellerWithWords(['see', 'and']);
+
+        $doc = 'See \cref{fig:example} and \Cref{sec:intro}, '
+            . '\nameref{tab:data}, \vref{eq:einstein}, '
+            . '\cpageref{fig:example}, \crefrange{fig:a}{fig:b}, '
+            . '\cref{fig:a,fig:b,tab:c}.';
+
+        $result = $speller->checkDocument($doc, 'latex');
+
+        $this->assertSame([], $result);
+    }
 }
