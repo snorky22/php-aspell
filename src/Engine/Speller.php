@@ -49,6 +49,7 @@ class Speller
         '\ref*',
         '\autoref',
         '\subref',
+        '\eqref',
     ];
 
     public function __construct(
