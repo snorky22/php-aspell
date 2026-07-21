@@ -22,7 +22,17 @@ class TexFilter
     private array $commands = [];
     private bool $checkComments = false;
 
-    public function __construct(array $customCommands = [])
+    /**
+     * Per-environment rules for the mandatory {…} arguments that follow the
+     * environment name in \begin{env}{…}{…}. Keyed by environment name; the
+     * value is a TexFilter spec ('p' = ignore one {…}). An optional [placement]
+     * argument after \begin{env} is always ignored regardless of this map.
+     *
+     * @var array<string, string>
+     */
+    private array $environments = [];
+
+    public function __construct(array $customCommands = [], array $customEnvironments = [])
     {
         // Default rules matching Aspell's behavior
         // P/p: check/ignore parameter {}
@@ -49,10 +59,24 @@ class TexFilter
             'input' => 'p',
             'include' => 'p',
             'includeonly' => 'p',
+            'includegraphics' => 'op', // ignore [key=val options] and {filename}
+            'graphicspath' => 'p',
+            // Theorem machinery: style names and \newtheorem environment keys
+            // are identifiers, not prose.
+            'theoremstyle' => 'p',
+            'newtheorem' => 'p',
+            'newtheoremstyle' => 'p',
             'textcolor' => 'pp', // ignore color name, check text
             'definecolor' => 'ppp',
             'newadd' => 'P', // example of custom command to check
         ], $customCommands);
+
+        // Environments whose \begin{env}{…} takes extra identifier arguments.
+        // \begin{restatable}{<type>}{<macro>} names a theorem type and the
+        // macro that restates it — neither is prose.
+        $this->environments = array_merge([
+            'restatable' => 'pp',
+        ], $customEnvironments);
 
         $this->reset();
     }
@@ -121,6 +145,9 @@ class TexFilter
                 }
 
                 $top['do_check'] = $this->commands[$top['name']] ?? '';
+                // \begin's first {…} is the environment name: capture it so
+                // per-environment argument rules can be applied when it closes.
+                $top['captureEnv'] = ($top['name'] === 'begin');
 
                 if (ctype_space($c)) {
                     $top['in_what'] = self::SWALLOW;
@@ -178,10 +205,23 @@ class TexFilter
 
         if ($top['in_what'] === self::PARM) {
             if ($c === '}') {
+                if (($top['captureEnv'] ?? false) === true) {
+                    // Just closed \begin's {env} name. Apply this environment's
+                    // extra-argument rule and always ignore a following optional
+                    // [placement] (e.g. \begin{table}[htbp], enumitem options).
+                    $env = $top['envName'] ?? '';
+                    $top['captureEnv'] = false;
+                    $top['envName'] = '';
+                    $top['do_check'] = 'o' . ($this->environments[$env] ?? '');
+                    $top['in_what'] = self::OTHER;
+                    return true;
+                }
                 return $this->endOption('P', 'p');
-            } else {
-                return isset($top['do_check'][0]) && $top['do_check'][0] === 'p';
             }
+            if (($top['captureEnv'] ?? false) === true) {
+                $top['envName'] = ($top['envName'] ?? '') . $c;
+            }
+            return isset($top['do_check'][0]) && $top['do_check'][0] === 'p';
         } elseif ($top['in_what'] === self::OPT) {
             if ($c === ']') {
                 return $this->endOption('O', 'o');
