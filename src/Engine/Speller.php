@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Aspell\Engine;
 
 use Aspell\Config\AspellConfig;
+use Aspell\Dictionary\AffixRules;
 use Aspell\Dictionary\AspellBinaryParser;
 use Aspell\Dictionary\CustomDictionary;
 
@@ -115,6 +116,9 @@ class Speller
         $datFile = $dir . DIRECTORY_SEPARATOR . $stem . '.dat';
         $charset = $this->currentCharset;
 
+        $affixName = '';
+        $affixCompress = false;
+
         if (file_exists($datFile)) {
             $lines = file($datFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
             $encodingFound = false;
@@ -126,6 +130,12 @@ class Speller
                 if (!$encodingFound && preg_match('/^charset\s+(.+)$/', $line, $matches)) {
                     $charset = trim($matches[1]);
                 }
+                if (preg_match('/^affix\s+(\S+)/', $line, $matches)) {
+                    $affixName = trim($matches[1]);
+                }
+                if (preg_match('/^affix-compress\s+(\S+)/', $line, $matches)) {
+                    $affixCompress = strtolower(trim($matches[1])) === 'true';
+                }
             }
         }
 
@@ -133,12 +143,21 @@ class Speller
         $charsetMap = [
             'iso8859-1' => 'ISO-8859-1',
             'iso8859-15' => 'ISO-8859-15',
+            'iso-8859-8-nl' => 'ISO-8859-8', // Hebrew (drop the directionality suffix)
             'koi8-r' => 'KOI8-R',
             'l-ar' => 'CP1256', // Approximation for Arabic if it's not actually UTF-8
         ];
-        
+
         if (isset($charsetMap[strtolower($charset)])) {
             $charset = $charsetMap[strtolower($charset)];
+        }
+
+        // Affix-compressed dictionaries (affix-compress true) store stems tagged
+        // with affix flags; load the matching affix file so those stems can be
+        // expanded into every inflected form they license.
+        $affix = null;
+        if ($affixCompress) {
+            $affix = $this->loadAffixRules($dir, $affixName !== '' ? $affixName : $stem, $charset);
         }
 
         $toClean = [];
@@ -160,13 +179,30 @@ class Speller
         }
 
         if (str_ends_with($path, '.multi')) {
-            $this->loadMultiDictionary($path, $toClean, $charset);
+            $this->loadMultiDictionary($path, $toClean, $charset, $affix);
         } else {
-            $this->dictionaries[] = new AspellBinaryParser($path, $toClean, $charset);
+            $this->dictionaries[] = new AspellBinaryParser($path, $toClean, $charset, $affix);
         }
 
         // Try to load phonetic rules automatically
         $this->autoLoadPhoneticRules($dir, $stem);
+    }
+
+    /**
+     * Loads the affix rules for an affix-compressed dictionary. The file is
+     * "<affixName>_affix.dat" in the dictionary directory (falling back to the
+     * dictionary stem). Returns null when no usable rules are found, so loading
+     * degrades gracefully to the un-expanded stem list.
+     */
+    private function loadAffixRules(string $dir, string $affixName, string $charset): ?AffixRules
+    {
+        $file = $dir . DIRECTORY_SEPARATOR . $affixName . '_affix.dat';
+        if (!is_file($file)) {
+            return null;
+        }
+
+        $rules = AffixRules::fromFile($file, $charset);
+        return ($rules !== null && !$rules->isEmpty()) ? $rules : null;
     }
 
     /**
@@ -281,7 +317,7 @@ class Speller
         }
     }
 
-    private function loadMultiDictionary(string $path, array $toClean, string $charset): void
+    private function loadMultiDictionary(string $path, array $toClean, string $charset, ?AffixRules $affix = null): void
     {
         $dir = dirname($path);
         $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
@@ -315,9 +351,9 @@ class Speller
                 }
 
                 if (str_ends_with($file, '.multi')) {
-                    $this->loadMultiDictionary($file, $toClean, $charset);
+                    $this->loadMultiDictionary($file, $toClean, $charset, $affix);
                 } else {
-                    $this->dictionaries[] = new AspellBinaryParser($file, $toClean, $charset);
+                    $this->dictionaries[] = new AspellBinaryParser($file, $toClean, $charset, $affix);
                 }
             }
         }
@@ -556,5 +592,229 @@ class Speller
             $this->loadedWords = $all === [] ? [] : array_merge(...$all);
         }
         return $this->loadedWords;
+    }
+
+    // -----------------------------------------------------------------------
+    // Built-in dictionary manifest
+    //
+    // The package ships a tree of Aspell dictionaries under /dictionaries. The
+    // web UI needs a small table mapping each language to a label and the path
+    // of its dictionary — the $DICTIONARIES array in public/index.php. Rather
+    // than hand-maintain that table, these helpers discover the dictionaries on
+    // disk, serialize the result to a JSON manifest at build time, and restore
+    // the same table from that JSON at runtime.
+    // -----------------------------------------------------------------------
+
+    /**
+     * Default location of the bundled dictionaries: the /dictionaries directory
+     * at the package root (this file lives in src/Engine/).
+     */
+    public static function defaultDictionaryRoot(): string
+    {
+        return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'dictionaries';
+    }
+
+    /**
+     * Scans $root recursively and returns a manifest of the built-in
+     * dictionaries, keyed by language code, in the exact shape consumed by the
+     * web UI:
+     *
+     *   ['en' => ['label' => 'English', 'path' => '/…/en.multi'], …]
+     *
+     * Only files named exactly "<xx>.multi" — a bare two-letter language code —
+     * are treated as a language's entry point. The regional and variant multis
+     * (en_US.multi, en-variant_0.multi, fr_FR.multi, …) are the alternatives
+     * that the canonical "<xx>.multi" already `add`s internally, so listing them
+     * would only duplicate the same language. As instructed, the two letters
+     * before ".multi" are trusted as the language code.
+     *
+     * Paths are returned absolute (ready to hand to {@see loadDictionary()});
+     * entries are ordered by code. Discovery order on disk is not stable across
+     * filesystems, so a duplicate code (same "<xx>.multi" in two trees) keeps
+     * the shortest path for a deterministic result.
+     *
+     * @return array<string, array{label:string, path:string}>
+     */
+    public static function discoverDictionaries(?string $root = null): array
+    {
+        $root = $root ?? self::defaultDictionaryRoot();
+        $realRoot = realpath($root);
+        if ($realRoot === false || !is_dir($realRoot)) {
+            throw new \InvalidArgumentException("Dictionary root not found: {$root}");
+        }
+
+        /** @var array<string, string> $found code => absolute path */
+        $found = [];
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($realRoot, \FilesystemIterator::SKIP_DOTS)
+        );
+        foreach ($iterator as $file) {
+            if (!$file->isFile()) {
+                continue;
+            }
+            // Trust the two-letter code before ".multi" as the language code.
+            if (!preg_match('/^([a-z]{2})\.multi$/i', $file->getFilename(), $m)) {
+                continue;
+            }
+            $code = strtolower($m[1]);
+            $path = $file->getPathname();
+
+            if (!isset($found[$code]) || strlen($path) < strlen($found[$code])) {
+                $found[$code] = $path;
+            }
+        }
+
+        ksort($found);
+
+        $manifest = [];
+        foreach ($found as $code => $path) {
+            $manifest[$code] = [
+                'label' => self::languageLabel($code),
+                'path'  => $path,
+            ];
+        }
+
+        return $manifest;
+    }
+
+    /**
+     * Discovers the bundled dictionaries under $root and writes the manifest to
+     * $jsonPath as JSON. Paths are stored relative to $root so the manifest
+     * stays valid wherever the package is installed; {@see loadDictionaryManifest()}
+     * resolves them back to absolute paths at runtime.
+     *
+     * @return array<string, array{label:string, path:string}> the discovered
+     *         manifest (with absolute paths), for convenience.
+     * @throws \RuntimeException if the file cannot be written.
+     */
+    public static function saveDictionaryManifest(string $jsonPath, ?string $root = null): array
+    {
+        $root = $root ?? self::defaultDictionaryRoot();
+        $manifest = self::discoverDictionaries($root);
+
+        if (file_put_contents($jsonPath, self::manifestToJson($manifest, $root), LOCK_EX) === false) {
+            throw new \RuntimeException("Could not write dictionary manifest: {$jsonPath}");
+        }
+
+        return $manifest;
+    }
+
+    /**
+     * Restores the $DICTIONARIES table from a manifest produced by
+     * {@see saveDictionaryManifest()}. $source may be a path to the JSON file or
+     * the JSON string itself. Relative paths are resolved against $root (the
+     * dictionary root the paths were stored relative to); absolute paths are
+     * kept as-is.
+     *
+     * @return array<string, array{label:string, path:string}> keyed by language
+     *         code, with absolute paths — drop-in for the web UI.
+     * @throws \JsonException            if the JSON is malformed.
+     * @throws \InvalidArgumentException if the decoded shape is not a manifest.
+     */
+    public static function loadDictionaryManifest(string $source, ?string $root = null): array
+    {
+        $root = $root ?? self::defaultDictionaryRoot();
+
+        // Accept either a path to a JSON file or a raw JSON string.
+        $json = is_file($source) ? (string) file_get_contents($source) : $source;
+
+        $data = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+        if (!is_array($data)) {
+            throw new \InvalidArgumentException('Dictionary manifest must decode to an object.');
+        }
+
+        // Tolerate both the wrapped form ({"dictionaries": {...}}) and a bare
+        // {code: {...}} map.
+        $entries = (isset($data['dictionaries']) && is_array($data['dictionaries']))
+            ? $data['dictionaries']
+            : $data;
+
+        $realRoot = realpath($root) ?: $root;
+
+        $dictionaries = [];
+        foreach ($entries as $code => $entry) {
+            if (!is_array($entry) || !isset($entry['path'])) {
+                continue;
+            }
+            $code = (string) $code;
+            $path = (string) $entry['path'];
+            if (!self::isAbsolutePath($path)) {
+                $path = $realRoot . DIRECTORY_SEPARATOR . $path;
+            }
+            $dictionaries[$code] = [
+                'label' => (string) ($entry['label'] ?? self::languageLabel($code)),
+                'path'  => $path,
+            ];
+        }
+
+        return $dictionaries;
+    }
+
+    /**
+     * Serializes a manifest to the JSON stored on disk, rewriting absolute paths
+     * as paths relative to $root for portability.
+     *
+     * @param array<string, array{label:string, path:string}> $manifest
+     */
+    private static function manifestToJson(array $manifest, string $root): string
+    {
+        $realRoot = realpath($root) ?: $root;
+
+        $out = [];
+        foreach ($manifest as $code => $entry) {
+            $out[$code] = [
+                'label' => $entry['label'],
+                'path'  => self::relativePath($realRoot, $entry['path']),
+            ];
+        }
+
+        return (string) json_encode(
+            ['dictionaries' => $out],
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR
+        );
+    }
+
+    /** Human-readable label for a language code (native name where useful). */
+    private static function languageLabel(string $code): string
+    {
+        static $labels = [
+            'en' => 'English',
+            'fr' => 'French — français',
+            'ru' => 'Russian — русский',
+            'ar' => 'Arabic — العربية',
+            'de' => 'German — Deutsch',
+            'es' => 'Spanish — español',
+            'it' => 'Italian — italiano',
+            'pt' => 'Portuguese — português',
+            'nl' => 'Dutch — Nederlands',
+            'pl' => 'Polish — polski',
+            'sv' => 'Swedish — svenska',
+            'nb' => 'Norwegian Bokmål — norsk',
+            'da' => 'Danish — dansk',
+            'fi' => 'Finnish — suomi',
+            'cs' => 'Czech — čeština',
+            'el' => 'Greek — Ελληνικά',
+            'he' => 'Hebrew — עברית',
+            'tr' => 'Turkish — Türkçe',
+            'uk' => 'Ukrainian — українська',
+            'ca' => 'Catalan — català',
+            'ro' => 'Romanian — română',
+            'hu' => 'Hungarian — magyar',
+        ];
+
+        return $labels[strtolower($code)] ?? strtoupper($code);
+    }
+
+    /** Returns $path relative to $root, or unchanged if it lies outside $root. */
+    private static function relativePath(string $root, string $path): string
+    {
+        $prefix = rtrim($root, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+        return str_starts_with($path, $prefix) ? substr($path, strlen($prefix)) : $path;
+    }
+
+    /** True for POSIX ("/…") and Windows ("C:\…" / "C:/…") absolute paths. */
+    private static function isAbsolutePath(string $path): bool
+    {
+        return str_starts_with($path, '/') || preg_match('#^[A-Za-z]:[\\\\/]#', $path) === 1;
     }
 }

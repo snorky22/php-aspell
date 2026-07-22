@@ -1,0 +1,18 @@
+Package: aspell-de
+Source: igerman98
+Version: 20161207-7
+Architecture: all
+Maintainer: Roland Rosenfeld <roland@debian.org>
+Installed-Size: 399
+Depends: aspell, dictionaries-common (>= 1.23~)
+Provides: aspell-dictionary
+Section: localization
+Priority: optional
+Homepage: https://www.j3e.de/ispell/igerman98/
+Description: German dictionary for aspell
+ This package contains German dictionaries for the aspell spell checker.
+ .
+ Dictionaries included are: de_DE (de/deutsch/german), de_CH (swiss), and
+ de_AT, all using the new German orthography from 1996 (neue Rechtschreibung).
+ .
+ The old (1901) spelling is provided by aspell-de-alt.

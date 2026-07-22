@@ -7,12 +7,14 @@ To provide a faceless, high-performance spelling engine that can be easily integ
 
 ## Features
 - **Pure PHP implementation** (Targeting PHP 8.4+).
-- **Multi-byte Support**: Full UTF-8 support for diverse languages including Arabic, Russian, and French. Handles legacy encodings (ISO-8859-1, KOI8-R, CP1256, etc.) by converting to UTF-8 internally.
+- **Multi-byte Support**: Full UTF-8 support for diverse languages including Arabic, Russian, German, Hebrew and French. Handles legacy encodings (ISO-8859-1, ISO-8859-8, KOI8-R, CP1256, etc.) by converting to UTF-8 internally.
 - **Phonetic Engine**: Full implementation of the Aspell "Phonet" algorithm for soundslike transformations, now multi-byte aware.
 - **Dictionary Support**:
     - **Binary Parser**: Supports standard `.aspell` and `.rws` binary files.
     - **Compressed Support**: Built-in decompression for `.cwl` (prezip) format.
     - **Multi-file Support**: Recursively parses `.multi` files for combining multiple word lists.
+    - **Affix Compression**: Recognizes inflected forms of affix-compressed dictionaries (German, Hebrew, Russian, Arabic) by applying the prefix/suffix rules in `<lang>_affix.dat` at lookup time — so `schöner`, `Häuser` or Hebrew clitic-prefixed forms are accepted without expanding the whole language into memory.
+    - **Auto-discovery & Manifest**: Discovers the bundled dictionaries by their canonical `<xx>.multi` entry point and persists the resulting language → label → path table to a JSON manifest that is restored at runtime.
     - **Phonetic Rules**: Automatically loads language-specific phonetic rules from `_phonet.dat` files.
     - **Custom Dictionaries**: Writable personal word lists, persistable to GNU Aspell's `personal_ws-1.1` file format or serialized to/from a JSON string for database storage.
 - **Suggestion Engine**: Integrated a weighted Damerau-Levenshtein edit distance algorithm for ranking spelling suggestions.
@@ -52,6 +54,80 @@ if (!$speller->check('nait')) {
 $latexContent = file_get_contents('paper.tex');
 $misspelled = $speller->checkDocument($latexContent, 'latex');
 ```
+
+#### Example: Discovering bundled dictionaries and persisting a manifest
+Instead of hand-maintaining a table of which dictionaries ship with your
+application, the `Speller` can **auto-discover** them and **persist** the result
+as a small JSON manifest. Discovery scans a directory tree for each language's
+canonical entry point — a file named exactly `<xx>.multi`, where the two letters
+before `.multi` are trusted as the language code. Regional and variant multis
+(`en_US.multi`, `en-variant_0.multi`, `fr_FR.multi`, …) are the alternatives that
+the canonical `en.multi` / `fr.multi` already `add`s internally, so they are not
+listed as separate languages.
+
+```php
+use Aspell\Engine\Speller;
+
+// Discover the dictionaries under a root (defaults to the bundled ./dictionaries).
+$dictionaries = Speller::discoverDictionaries('path/to/dictionaries');
+// => [
+//   'de' => ['label' => 'German — Deutsch',      'path' => '/abs/…/de.multi'],
+//   'en' => ['label' => 'English',               'path' => '/abs/…/en.multi'],
+//   'he' => ['label' => 'Hebrew — עברית',        'path' => '/abs/…/he.multi'],
+//   … ordered by code, with absolute paths ready for loadDictionary()
+// ]
+```
+
+Rather than run discovery on every request, generate the manifest once (e.g. at
+build/deploy time) and load it at runtime:
+
+```php
+// --- Build time: write the manifest --------------------------------------
+// Paths are stored RELATIVE to the root, so the file stays valid wherever the
+// package is installed. Returns the discovered manifest for convenience.
+Speller::saveDictionaryManifest('path/to/dictionaries/dictionaries.json', 'path/to/dictionaries');
+
+// --- Runtime: restore the $DICTIONARIES table ----------------------------
+// The source may be a path to the JSON file OR the JSON string itself; relative
+// paths are resolved back to absolute against the given root.
+$dictionaries = Speller::loadDictionaryManifest(
+    'path/to/dictionaries/dictionaries.json',
+    'path/to/dictionaries'
+);
+
+$speller->loadDictionary($dictionaries['de']['path']);
+```
+
+Both `discoverDictionaries()` and `loadDictionaryManifest()` return the same
+shape — `['<code>' => ['label' => string, 'path' => string], …]` — so callers
+can treat them interchangeably (discover live when no manifest exists, load the
+manifest otherwise). `Speller::defaultDictionaryRoot()` returns the bundled
+`dictionaries/` directory, which is the default root when the argument is
+omitted. Labels come from a built-in table of common languages (falling back to
+the uppercased code for unknown ones).
+
+A ready-made CLI script regenerates the manifest — run it after adding or
+removing a dictionary:
+
+```bash
+php bin/build-dictionaries.php
+# or with an explicit root / output path:
+php bin/build-dictionaries.php path/to/dictionaries path/to/out.json
+```
+
+```json
+{
+    "dictionaries": {
+        "de": { "label": "German — Deutsch",      "path": "aspell6-de-20161207-7-0/de.multi" },
+        "en": { "label": "English",               "path": "aspell6-en-2026.02.25-0/en.multi" },
+        "he": { "label": "Hebrew — עברית",         "path": "aspell6-he-1.0-0/he.multi" }
+    }
+}
+```
+
+`public/index.php` uses exactly this flow: it restores `$DICTIONARIES` from
+`dictionaries/dictionaries.json` when present, and falls back to live discovery
+otherwise — so the web UI's language selector is populated automatically.
 
 #### Example: Custom (personal) dictionary
 You can load a writable custom dictionary that is checked *in addition to* the
@@ -313,9 +389,10 @@ echo $config->retrieve('lang'); // fr
 
 ## Web demo
 A minimal browser UI for trying the checker interactively lives in `public/index.php`.
-It provides a text area for LaTeX/plain input, a dictionary selector (English,
-French, Russian, Arabic), a corrected-text box with a copy button, a highlighted
-preview, and per-word suggestions (click a suggestion to apply it).
+It provides a text area for LaTeX/plain input, a dictionary selector populated
+automatically from the discovered dictionaries (currently English, French,
+German, Hebrew, Russian and Arabic), a corrected-text box with a copy button, a
+highlighted preview, and per-word suggestions (click a suggestion to apply it).
 
 ### Running the server
 Start PHP's built-in web server from the project root (the `php-aspell` directory),
@@ -333,7 +410,9 @@ Notes:
   (both must be present; run `composer install` first if `vendor/` is missing).
 - **Port already in use?** Pick another one, e.g. `php -S 127.0.0.1:8137 public/index.php`.
 - **First check load time**: the chosen dictionary is loaded into memory on each request.
-  French/English/Russian are fast (~0.2–0.6 s); Arabic (≈ 1M words) takes a few seconds.
+  French/English/German/Russian are fast (~0.2–0.8 s); Hebrew is quick too despite its
+  size because inflected forms are matched on demand rather than expanded; Arabic
+  (≈ 1M words) takes a few seconds.
 
 The page renders on `GET`; submitting posts the text as JSON and runs the checker
 server-side.

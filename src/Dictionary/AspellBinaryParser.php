@@ -31,11 +31,19 @@ class AspellBinaryParser implements WordListInterface
 
     private string $charset = 'utf-8';
 
-    public function __construct(string $filename, array $toClean = [], string $charset = 'utf-8')
-    {
+    /** Affix rules for expanding affix-compressed stems, when available. */
+    private ?AffixRules $affix = null;
+
+    public function __construct(
+        string $filename,
+        array $toClean = [],
+        string $charset = 'utf-8',
+        ?AffixRules $affix = null,
+    ) {
         $this->filename = $filename;
         $this->toClean = $toClean;
         $this->charset = strtolower($charset);
+        $this->affix = $affix;
         $this->load();
     }
 
@@ -255,37 +263,113 @@ class AspellBinaryParser implements WordListInterface
 
     /**
      * Normalises a decoded entry and stores it, keyed case-insensitively, in
-     * the in-memory word set.
+     * the in-memory word set. The stored value is the entry's affix flags (an
+     * empty string for a plain word).
      *
-     * Affix-compressed dictionaries (e.g. Russian, Arabic) store entries as
-     * "stem/flags" (and a leading '*' marks a forbidden word). We keep only the
-     * stem here; expanding the affix rules themselves is a separate concern.
-     * The separators are ASCII, so this is done on the raw bytes before any
-     * charset conversion.
+     * Affix-compressed dictionaries (German, Hebrew, Russian, …) store entries
+     * as "stem/flags", where the flags name the prefix/suffix groups in the
+     * companion affix file that the stem may take (a leading '*' marks a
+     * forbidden word). We keep the stem and remember its flags; the inflected
+     * forms are recognised lazily at lookup time by {@see cwlLookup()}, which
+     * strips affixes back to a stem — the only tractable approach for languages
+     * such as Hebrew, whose full expansion is astronomically large. The '/' and
+     * '*' separators are ASCII, so they are handled on the raw bytes before the
+     * stem is converted to UTF-8; flags are ASCII and kept verbatim.
      */
-    private function store(string $word, bool $needsConvert): void
+    private function store(string $entry, bool $needsConvert): void
     {
-        if (($slash = strpos($word, '/')) !== false) {
-            $word = substr($word, 0, $slash);
+        $flags = '';
+        if (($slash = strpos($entry, '/')) !== false) {
+            $flags = substr($entry, $slash + 1);
+            $entry = substr($entry, 0, $slash);
         }
-        if (isset($word[0]) && $word[0] === '*') {
-            $word = substr($word, 1);
+        if (isset($entry[0]) && $entry[0] === '*') {
+            $entry = substr($entry, 1);
         }
-        if ($word === '') {
+        if ($entry === '') {
             return;
         }
 
         if ($needsConvert) {
-            $word = mb_convert_encoding($word, 'UTF-8', $this->charset);
+            $entry = mb_convert_encoding($entry, 'UTF-8', $this->charset);
         }
-        $this->words[mb_strtolower($word, 'UTF-8')] = true;
+        $key = mb_strtolower($entry, 'UTF-8');
+
+        // A stem can recur with different flag sets; keep their union.
+        if (isset($this->words[$key]) && $this->words[$key] !== '') {
+            $flags = $this->mergeFlags($this->words[$key], $flags);
+        }
+        $this->words[$key] = $flags;
+    }
+
+    /** Union of two flag strings (each flag is a single character). */
+    private function mergeFlags(string $a, string $b): string
+    {
+        if ($a === '' || $b === '') {
+            return $a . $b;
+        }
+        return implode('', array_unique(str_split($a . $b)));
+    }
+
+    /**
+     * Case-insensitive lookup against the in-memory stem set (CWL path). A word
+     * is accepted if it is a stored stem outright, or — for affix-compressed
+     * dictionaries — if stripping one affix (or a prefix and a suffix, when both
+     * groups allow cross-product) recovers a stored stem that carries the
+     * matching flag(s).
+     */
+    private function cwlLookup(string $word): bool
+    {
+        $lc = mb_strtolower($word, 'UTF-8');
+        if (isset($this->words[$lc])) {
+            return true;
+        }
+        if ($this->affix === null) {
+            return false;
+        }
+
+        foreach ($this->affix->stripSuffix($lc) as $c) {
+            if ($this->stemHasFlag($c['stem'], $c['flag'])) {
+                return true;
+            }
+        }
+        foreach ($this->affix->stripPrefix($lc) as $c) {
+            if ($this->stemHasFlag($c['stem'], $c['flag'])) {
+                return true;
+            }
+        }
+
+        // Cross-product: strip a prefix, then a suffix, off the same word; the
+        // recovered stem must carry both flags and both groups must permit it.
+        foreach ($this->affix->stripPrefix($lc) as $p) {
+            if (!$p['cross']) {
+                continue;
+            }
+            foreach ($this->affix->stripSuffix($p['stem']) as $s) {
+                if ($s['cross']
+                    && $this->stemHasFlag($s['stem'], $p['flag'])
+                    && str_contains((string) $this->words[$s['stem']], $s['flag'])
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /** True when $stem is a stored stem whose flag set contains $flag. */
+    private function stemHasFlag(string $stem, string $flag): bool
+    {
+        $flags = $this->words[$stem] ?? null;
+        return $flags !== null && $flags !== '' && str_contains($flags, $flag);
     }
 
     public function lookup(string $word): bool
     {
         $originalWord = $word;
         if (!empty($this->words)) {
-            return isset($this->words[mb_strtolower($word, 'UTF-8')]);
+            return $this->cwlLookup($word);
         }
 
         if ($this->charset !== 'utf-8' && $this->charset !== 'utf8') {

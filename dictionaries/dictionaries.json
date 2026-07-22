@@ -1,0 +1,28 @@
+{
+    "dictionaries": {
+        "ar": {
+            "label": "Arabic — العربية",
+            "path": "aspell6-ar-1.2-0/ar.multi"
+        },
+        "de": {
+            "label": "German — Deutsch",
+            "path": "aspell6-de-20161207-7-0/de.multi"
+        },
+        "en": {
+            "label": "English",
+            "path": "aspell6-en-2026.02.25-0/en.multi"
+        },
+        "fr": {
+            "label": "French — français",
+            "path": "aspell-fr-0.50-3/fr.multi"
+        },
+        "he": {
+            "label": "Hebrew — עברית",
+            "path": "aspell6-he-1.0-0/he.multi"
+        },
+        "ru": {
+            "label": "Russian — русский",
+            "path": "aspell6-ru-0.99f7-1/ru.multi"
+        }
+    }
+}

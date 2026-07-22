@@ -21,14 +21,19 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 use Aspell\Config\AspellConfig;
 use Aspell\Engine\Speller;
 
-/** Whitelisted dictionaries (never trust a client-supplied path). */
-$DICT_ROOT = dirname(__DIR__) . '/dictionaries';
-$DICTIONARIES = [
-    'en' => ['label' => 'English',            'path' => $DICT_ROOT . '/aspell6-en-2026.02.25-0/en.multi'],
-    'fr' => ['label' => 'French — français',  'path' => $DICT_ROOT . '/aspell-fr-0.50-3/fr.multi'],
-    'ru' => ['label' => 'Russian — русский',  'path' => $DICT_ROOT . '/aspell6-ru-0.99f7-1/ru.multi'],
-    'ar' => ['label' => 'Arabic — العربية',   'path' => $DICT_ROOT . '/aspell6-ar-1.2-0/ar.multi'],
-];
+/**
+ * Whitelisted dictionaries (never trust a client-supplied path).
+ *
+ * The table is restored from the JSON manifest built by
+ * `php bin/build-dictionaries.php`. If the manifest is missing (e.g. it has not
+ * been generated yet) the dictionaries are discovered on the fly instead, so
+ * the UI works out of the box.
+ */
+$DICT_ROOT     = dirname(__DIR__) . '/dictionaries';
+$DICT_MANIFEST = $DICT_ROOT . '/dictionaries.json';
+$DICTIONARIES  = is_file($DICT_MANIFEST)
+    ? Speller::loadDictionaryManifest($DICT_MANIFEST, $DICT_ROOT)
+    : Speller::discoverDictionaries($DICT_ROOT);
 
 const MAX_TEXT_BYTES   = 300_000; // guard against pathological input
 const MAX_SUGGEST_WORDS = 60;      // cap unique words we suggest for

@@ -1,0 +1,37 @@
+name_english German
+lang de
+version 20161207-7-0
+copyright Other
+complete unknown
+accurate unknown
+author:
+   name Kevin Atkinson
+   email kevina at gnu org
+   maintainer true
+author:
+   name Roland Rosenfeld
+   email roland at debian org
+   maintainer true
+readme-extra NOTE
+url https://packages.debian.org/testing/aspell-de
+source_url https://www.j3e.de/ispell/igerman98/
+data-file de_phonet.dat
+data-file de_affix.dat
+dict:
+   name de_AT
+   add de-common
+   add de_AT-only
+dict:
+   name de_DE
+   alias deutsch
+   alias german
+   add de-common
+   add de_DE-only
+dict:
+   name de
+   add de-common
+   add de_DE-only
+dict:
+   name de_CH
+   add de-common
+   add de_CH-only
